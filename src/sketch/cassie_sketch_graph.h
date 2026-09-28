@@ -154,6 +154,10 @@ class CassieSketchGraph : public Resource {
 	};
 	static void _cumulative_lengths(const PackedVector3Array &p_poly,
 			LocalVector<real_t> &r_cum);
+	// Closest point on a polyline to p_point: squared distance returned, arc
+	// length from the start written to r_t. First segment wins a tie.
+	static real_t _project_onto(const PackedVector3Array &p_poly,
+			const LocalVector<real_t> &p_cum, const Vector3 &p_point, real_t &r_t);
 	static void _crossings(const PackedVector3Array &p_a,
 			const PackedVector3Array &p_b, real_t p_proximity, real_t p_merge_epsilon,
 			LocalVector<SplitPt> &r_a, LocalVector<SplitPt> &r_b);
@@ -204,6 +208,18 @@ public:
 	// edge's mark.
 	int add_stroke_intersecting(const PackedVector3Array &p_points,
 			const PackedVector3Array &p_normals, real_t p_proximity,
+			bool p_boundary = false);
+
+	// interactor-dress-on: the parallel-commit counterpart to
+	// add_stroke_intersecting. Splits the new stroke and the edges it crosses at
+	// externally supplied crossing world points, each projected onto the
+	// polylines to recover its arc length, instead of solving the crossings
+	// here. This lets the crossing solve run in another guest (MuJoCo collision,
+	// RFD 2274) and be injected. Reuses the same slicing; leaves _crossings and
+	// find_cycles untouched. Returns the number of edges added.
+	int add_stroke_with_splits(const PackedVector3Array &p_points,
+			const PackedVector3Array &p_normals,
+			const PackedVector3Array &p_crossings, real_t p_proximity,
 			bool p_boundary = false);
 
 	// interactor-dress-on: true when every edge of the cycle is a boundary

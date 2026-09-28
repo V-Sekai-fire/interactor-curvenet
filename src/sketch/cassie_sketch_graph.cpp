@@ -625,6 +625,102 @@ int CassieSketchGraph::build_from_polylines(
 	return total_edges;
 }
 
+real_t CassieSketchGraph::_project_onto(const PackedVector3Array &p_poly,
+		const LocalVector<real_t> &p_cum, const Vector3 &p_point, real_t &r_t) {
+	real_t best_d2 = INFINITY;
+	r_t = 0;
+	for (int i = 0; i + 1 < p_poly.size(); ++i) {
+		const Vector3 a = p_poly[i];
+		const Vector3 ab = p_poly[i + 1] - a;
+		const real_t len2 = ab.length_squared();
+		real_t u = 0;
+		if (len2 > 0) {
+			u = CLAMP((p_point - a).dot(ab) / len2, real_t(0), real_t(1));
+		}
+		const real_t d2 = (a + ab * u).distance_squared_to(p_point);
+		if (d2 < best_d2) {
+			best_d2 = d2;
+			r_t = p_cum[i] + u * Math::sqrt(len2);
+		}
+	}
+	return best_d2;
+}
+
+int CassieSketchGraph::add_stroke_with_splits(const PackedVector3Array &p_points,
+		const PackedVector3Array &p_normals, const PackedVector3Array &p_crossings,
+		real_t p_proximity, bool p_boundary) {
+	if (p_points.size() < 2) {
+		return 0;
+	}
+	const real_t prox2 = p_proximity * p_proximity;
+	LocalVector<real_t> cum_new;
+	_cumulative_lengths(p_points, cum_new);
+
+	LocalVector<SplitPt> new_splits;
+	LocalVector<int> hit_ids;
+	LocalVector<PackedVector3Array> hit_points;
+	LocalVector<int> hit_source;
+	LocalVector<bool> hit_boundary;
+	LocalVector<LocalVector<SplitPt>> hit_splits;
+	HashMap<int, int> hit_index;
+
+	for (int c = 0; c < p_crossings.size(); ++c) {
+		const Vector3 cp = p_crossings[c];
+		real_t t_new = 0;
+		if (_project_onto(p_points, cum_new, cp, t_new) > prox2) {
+			continue;
+		}
+		int best_edge = -1;
+		real_t best_d2 = prox2;
+		real_t best_t = 0;
+		for (const KeyValue<int, Ref<CassieSketchGraphEdge>> &kv : edges) {
+			LocalVector<real_t> cum_e;
+			_cumulative_lengths(kv.value->get_points(), cum_e);
+			real_t t_e = 0;
+			const real_t d2 = _project_onto(kv.value->get_points(), cum_e, cp, t_e);
+			if (d2 < best_d2) {
+				best_d2 = d2;
+				best_edge = kv.key;
+				best_t = t_e;
+			}
+		}
+		if (best_edge < 0) {
+			continue;
+		}
+		new_splits.push_back(SplitPt{ t_new, cp });
+		HashMap<int, int>::Iterator it = hit_index.find(best_edge);
+		int hi;
+		if (it) {
+			hi = it->value;
+		} else {
+			hi = (int)hit_ids.size();
+			hit_index.insert(best_edge, hi);
+			const Ref<CassieSketchGraphEdge> e = edges[best_edge];
+			hit_ids.push_back(best_edge);
+			hit_points.push_back(e->get_points());
+			hit_source.push_back(e->get_source_polyline_idx());
+			hit_boundary.push_back(e->get_boundary());
+			hit_splits.push_back(LocalVector<SplitPt>());
+		}
+		hit_splits[hi].push_back(SplitPt{ best_t, cp });
+	}
+
+	int added = 0;
+	for (uint32_t h = 0; h < hit_ids.size(); ++h) {
+		_remove_edge(hit_ids[h]);
+		added += _add_polyline_sliced(hit_points[h], hit_splits[h], hit_source[h], hit_boundary[h]) - 1;
+	}
+	if (new_splits.is_empty()) {
+		const int eid = add_stroke(p_points, p_normals);
+		if (eid < 0) {
+			return added;
+		}
+		edges[eid]->set_boundary(p_boundary);
+		return added + 1;
+	}
+	return added + _add_polyline_sliced(p_points, new_splits, -1, p_boundary);
+}
+
 int CassieSketchGraph::add_stroke_intersecting(const PackedVector3Array &p_points,
 		const PackedVector3Array &p_normals, real_t p_proximity, bool p_boundary) {
 	if (p_points.size() < 2) {
