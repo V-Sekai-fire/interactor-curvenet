@@ -113,7 +113,8 @@ class CassieSketcher : public Node3D {
 	void _ensure_owned_state();
 
 	Dictionary _run_chain_locally(const Ref<CassieInputStroke> &p_input,
-			bool p_emit_signals, bool p_boundary = false);
+			bool p_emit_signals, bool p_boundary = false,
+			const PackedVector3Array &p_crossings = PackedVector3Array());
 
 	Dictionary _drain_patches();
 
@@ -159,6 +160,12 @@ public:
 	//   new_patches     : TypedArray<CassieSurfacePatch>
 	//   removed_patches : TypedArray<CassieSurfacePatch>
 	Dictionary commit_stroke(int p_stroke_id);
+
+	// Parallel-commit finalize: commit an in-flight stroke splitting it at
+	// crossings supplied by the collision guest (RFD 2274) instead of solving
+	// them. Same result shape as commit_stroke.
+	Dictionary commit_stroke_with_crossings(int p_stroke_id,
+			const PackedVector3Array &p_crossings);
 
 	// Decode a packet produced by encode_stroke_packet on another peer
 	// and run the same local chain. The packet's creation_time is

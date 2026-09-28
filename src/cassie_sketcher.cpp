@@ -110,7 +110,8 @@ void CassieSketcher::add_sample(int p_stroke_id, const Vector3 &p_local_position
 // update chain synchronously. Identical input bits produce identical
 // output bits.
 Dictionary CassieSketcher::_run_chain_locally(
-		const Ref<CassieInputStroke> &p_input, bool p_emit_signals, bool p_boundary) {
+		const Ref<CassieInputStroke> &p_input, bool p_emit_signals, bool p_boundary,
+		const PackedVector3Array &p_crossings) {
 	Dictionary result;
 	result["ok"] = false;
 	result["is_valid"] = false;
@@ -232,7 +233,14 @@ Dictionary CassieSketcher::_run_chain_locally(
 		sketch_graph->add_stroke_intersecting(first_half, empty_normals, graph_proximity, p_boundary);
 		sketch_graph->add_stroke_intersecting(second_half, empty_normals, graph_proximity, p_boundary);
 	} else if (points.size() >= 2) {
-		sketch_graph->add_stroke_intersecting(points, empty_normals, graph_proximity, p_boundary);
+		// Parallel-commit finalize (RFD 2274/2119): crossings supplied by the
+		// collision guest split the stroke; empty falls back to solving them
+		// here, which is the predicted-points path when the guest misses budget.
+		if (!p_crossings.is_empty()) {
+			sketch_graph->add_stroke_with_splits(points, empty_normals, p_crossings, graph_proximity, p_boundary);
+		} else {
+			sketch_graph->add_stroke_intersecting(points, empty_normals, graph_proximity, p_boundary);
+		}
 	}
 
 	const Dictionary patch_update = surface_manager->update();
@@ -273,6 +281,32 @@ Dictionary CassieSketcher::commit_stroke(int p_stroke_id) {
 	result = _run_chain_locally(input, true, boundary);
 
 	// Stash the encoded packet for the caller's convenience.
+	PackedVector3Array positions = input->get_points();
+	PackedFloat32Array pressures = input->get_weights();
+	last_encoded_packet[p_stroke_id] = CassieStrokePacket::encode(
+			peer_id, p_stroke_id, broadcast_seq++,
+			bool(result.get("is_valid", false)) &&
+					Ref<CassieFinalStroke>(result.get("final_stroke", Variant())).is_valid() &&
+					Ref<CassieFinalStroke>(result.get("final_stroke", Variant()))->is_closed_loop(),
+			positions, pressures);
+	return result;
+}
+
+Dictionary CassieSketcher::commit_stroke_with_crossings(int p_stroke_id,
+		const PackedVector3Array &p_crossings) {
+	Dictionary result;
+	result["ok"] = false;
+
+	HashMap<int, InFlightStroke>::Iterator it = in_flight.find(p_stroke_id);
+	if (!it) {
+		return result;
+	}
+	Ref<CassieInputStroke> input = it->value.input;
+	const bool boundary = it->value.boundary;
+	in_flight.remove(it);
+
+	result = _run_chain_locally(input, true, boundary, p_crossings);
+
 	PackedVector3Array positions = input->get_points();
 	PackedFloat32Array pressures = input->get_weights();
 	last_encoded_packet[p_stroke_id] = CassieStrokePacket::encode(
