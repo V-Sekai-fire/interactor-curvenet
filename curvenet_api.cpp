@@ -298,28 +298,45 @@ std::string pen_point(int id, float x, float y, float z, float pressure) {
 	});
 }
 
+static std::string _commit_report(CassieSketcher *sk, const Dictionary &r) {
+	const Ref<CassieFinalStroke> fs = r.get("final_stroke", Variant());
+	const TypedArray<CassieSurfacePatch> np = r.get("new_patches", Array());
+	const Ref<CassieSketchGraph> g = sk->get_sketch_graph();
+	g_counts.edges = g->get_edge_count();
+	g_counts.nodes = g->get_node_count();
+	// cycles: the face cycles that bound surface; openings: those made
+	// only of boundary strokes (no patch).
+	const Array cycles = g->find_cycles();
+	g_counts.cycles = 0;
+	g_counts.openings = 0;
+	for (int i = 0; i < cycles.size(); ++i) {
+		(g->is_opening(cycles[i]) ? g_counts.openings : g_counts.cycles) += 1;
+	}
+	return fmt("ok=%d valid=%d closed=%d new_patches=%d patches=%d edges=%d nodes=%d cycles=%d openings=%d",
+			int(bool(r.get("ok", false))), int(bool(r.get("is_valid", false))),
+			int(fs.is_valid() && fs->is_closed_loop()), int(np.size()),
+			sk->get_surface_manager()->get_patch_count(), g_counts.edges, g_counts.nodes, g_counts.cycles,
+			g_counts.openings);
+}
+
 std::string pen_end(int id) {
 	return guarded([&] {
 		CassieSketcher *sk = sketcher();
-		const Dictionary r = sk->commit_stroke(id);
-		const Ref<CassieFinalStroke> fs = r.get("final_stroke", Variant());
-		const TypedArray<CassieSurfacePatch> np = r.get("new_patches", Array());
-		const Ref<CassieSketchGraph> g = sk->get_sketch_graph();
-		g_counts.edges = g->get_edge_count();
-		g_counts.nodes = g->get_node_count();
-		// cycles: the face cycles that bound surface; openings: those made
-		// only of boundary strokes (no patch).
-		const Array cycles = g->find_cycles();
-		g_counts.cycles = 0;
-		g_counts.openings = 0;
-		for (int i = 0; i < cycles.size(); ++i) {
-			(g->is_opening(cycles[i]) ? g_counts.openings : g_counts.cycles) += 1;
+		return _commit_report(sk, sk->commit_stroke(id));
+	});
+}
+
+// Parallel-commit finalize (RFD 2274): commit the stroke splitting it at
+// crossings the collision guest found, three floats a point. Empty falls back
+// to pen_end's own solve, the predicted-points path.
+std::string pen_end_with_crossings(int id, const std::vector<float> &crossings_xyz) {
+	return guarded([&] {
+		CassieSketcher *sk = sketcher();
+		PackedVector3Array crossings;
+		for (size_t i = 0; i + 2 < crossings_xyz.size(); i += 3) {
+			crossings.push_back(Vector3(crossings_xyz[i], crossings_xyz[i + 1], crossings_xyz[i + 2]));
 		}
-		return fmt("ok=%d valid=%d closed=%d new_patches=%d patches=%d edges=%d nodes=%d cycles=%d openings=%d",
-				int(bool(r.get("ok", false))), int(bool(r.get("is_valid", false))),
-				int(fs.is_valid() && fs->is_closed_loop()), int(np.size()),
-				sk->get_surface_manager()->get_patch_count(), g_counts.edges, g_counts.nodes, g_counts.cycles,
-				g_counts.openings);
+		return _commit_report(sk, sk->commit_stroke_with_crossings(id, crossings));
 	});
 }
 

@@ -60,6 +60,12 @@ static Variant pen_end(int id) {
 	return text(cn::pen_end(id));
 }
 
+// Finalize the stroke against crossings the collision guest found (3 floats a
+// point); empty crossings fall back to pen_end's own solve.
+static Variant pen_end_with_crossings(int id, PackedArray<float> crossings) {
+	return text(cn::pen_end_with_crossings(id, crossings.fetch()));
+}
+
 // A whole stroke in one call: xyzp holds 4 floats per sample (x, y, z,
 // pressure); answers pen_end's line.
 static Variant pen_stroke(PackedArray<float> xyzp) {
@@ -160,6 +166,8 @@ int main() {
 	ADD_API_FUNCTION(pen_point, "String", "int id, float x, float y, float z, float pressure", "Add a sample");
 	ADD_API_FUNCTION(pen_end, "String", "int id",
 			"Commit: ok valid closed new_patches patches edges nodes cycles");
+	ADD_API_FUNCTION(pen_end_with_crossings, "String", "int id, PackedFloat32Array crossings",
+			"End a stroke, splitting at guest-supplied crossings (3 floats a point)");
 	ADD_API_FUNCTION(pen_stroke, "String", "PackedFloat32Array xyzp", "A whole stroke, 4 floats per sample");
 	ADD_API_FUNCTION(patch_count, "int", "", "Active surface patches");
 	ADD_API_FUNCTION(patch_vertices, "PackedFloat32Array", "int i", "Patch i's vertices (mesh_wire)");

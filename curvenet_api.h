@@ -43,6 +43,7 @@ std::string pen_point(int id, float x, float y, float z, float pressure);
 // cycles: face cycles that bound surface; openings: cycles made only of
 // boundary strokes.
 std::string pen_end(int id);
+std::string pen_end_with_crossings(int id, const std::vector<float> &crossings_xyz);
 
 int patch_count();
 std::vector<float> patch_vertices(int i);
