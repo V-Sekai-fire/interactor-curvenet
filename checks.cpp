@@ -337,6 +337,38 @@ Out crossing_split() {
 	return o;
 }
 
+// crossing_split_injected.gd: the same three overshooting strokes through
+// add_stroke_with_splits, crossings injected as world points (RFD 2274's
+// parallel-commit path), reproduce crossing_split's 9 edges / 9 nodes /
+// >= 1 cycle, proving the injected crossings match what _crossings finds.
+Out crossing_split_injected() {
+	const real_t prox = real_t(0.02);
+	const PackedVector3Array empty;
+	std::vector<PackedVector3Array> s;
+	s.push_back(segment(Vector3(-1.2f, 0, 0), Vector3(1.2f, 0, 0), 16));
+	s.push_back(segment(Vector3(1.1f, -0.3f, 0), Vector3(-0.2f, 1.8f, 0), 16));
+	s.push_back(segment(Vector3(0.2f, 1.8f, 0), Vector3(-1.1f, -0.3f, 0), 16));
+	// The three pairwise crossings as world points, as a collision guest returns
+	// them, supplied on the incremental add that first sees each pair.
+	PackedVector3Array c0, c1, c2;
+	c1.push_back(Vector3(0.9143f, 0, 0));
+	c2.push_back(Vector3(-0.9143f, 0, 0));
+	c2.push_back(Vector3(0.0f, 1.4769f, 0));
+	Ref<CassieSketchGraph> g;
+	g.instantiate();
+	g->add_stroke_with_splits(s[0], empty, c0, prox);
+	g->add_stroke_with_splits(s[1], empty, c1, prox);
+	g->add_stroke_with_splits(s[2], empty, c2, prox);
+	const int cycles = int(g->find_cycles().size());
+	const int edges = g->get_edge_count(), nodes = g->get_node_count();
+	Out o;
+	o.ints = { edges, nodes, cycles };
+	o.pass = edges == 9 && nodes == 9 && cycles >= 1;
+	o.detail = fmt("%d edges, %d nodes, %d cycle(s) via injected crossings (want 9/9/>=1)",
+			edges, nodes, cycles);
+	return o;
+}
+
 // constraint_solver.gd: a mirror-plane constraint per anchor pulls a curve
 // 0.05 above y=0 to within 5e-3 of it; the raw input fails that tolerance.
 Out constraint_solver() {
@@ -839,6 +871,7 @@ const std::vector<std::pair<std::string, std::function<Out()>>> &table() {
 		{ "curvenet_extract", curvenet_extract_check },
 		{ "patch_pipeline", patch_pipeline },
 		{ "crossing_split", crossing_split },
+		{ "crossing_split_injected", crossing_split_injected },
 		{ "constraint_solver", constraint_solver },
 		{ "pen_sphere", pen_sphere },
 		{ "extractor_cube", extractor_cube },
