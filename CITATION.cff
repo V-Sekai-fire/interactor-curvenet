@@ -44,3 +44,22 @@ authors:
 repository-code: https://github.com/V-Sekai-fire/entities-godot
 commit: 18cc59c642f123e19650687e3de84ffe2faa37f6
 license: MIT
+references:
+  - type: conference-paper
+    title: "CASSIE: Curve and Surface Sketching in Immersive Environments"
+    authors:
+      - family-names: Yu
+        given-names: Emilie
+      - family-names: Arora
+        given-names: Rahul
+      - family-names: Stanko
+        given-names: Tibor
+      - family-names: Bærentzen
+        given-names: Jakob Andreas
+      - family-names: Singh
+        given-names: Karan
+      - family-names: Bousseau
+        given-names: Adrien
+    collection-title: Proceedings of the 2021 CHI Conference on Human Factors in Computing Systems
+    doi: 10.1145/3411764.3445158
+    year: 2021
