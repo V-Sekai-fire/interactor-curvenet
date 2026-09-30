@@ -17,7 +17,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/cassie_sources.cmake)
 # Lean side of Cut 4 landed; the symbols they define then stay unresolved and
 # are listed by tests/native/curvenet. OFF, the default, builds them.
 option(CURVENET_KERNELS_PENDING "Build curvenet without the Lean-emitted Cassie kernels" OFF)
-include(${CMAKE_CURRENT_LIST_DIR}/godot_lite.cmake)
+include(${GUEST_RUNTIME_ROOT}/cmake/godot_lite.cmake)
 
 # Bit-determinism: the beautify chain runs on every peer from the same stroke
 # samples, so no fast-math anywhere and strict IEEE evaluation (SCsub's clang
@@ -67,7 +67,7 @@ else()
 	add_library(cassie_kernels STATIC EXCLUDE_FROM_ALL ${CASSIE_KERNEL_SOURCES})
 	target_include_directories(cassie_kernels
 		PUBLIC "${CASSIE_SRC}/solver/slang_dispatch"
-		PRIVATE "${DRESS_ON_ROOT}/guest/avbd/slang-rt" "${DRESS_ON_ROOT}/kernels/cassie/cpp")
+		PRIVATE "${GUEST_RUNTIME_ROOT}/guest/avbd/slang-rt" "${CURVENET_ROOT}/kernels/cassie/cpp")
 	target_compile_options(cassie_kernels PRIVATE ${CURVENET_STRICT_FP} -Wno-non-virtual-dtor)
 endif()
 
@@ -75,11 +75,11 @@ endif()
 add_library(cassie_core STATIC EXCLUDE_FROM_ALL ${CASSIE_CORE_SOURCES})
 target_include_directories(cassie_core PUBLIC
 	"${CASSIE_SRC}"
-	"${DRESS_ON_ROOT}/guest/godot_lite"
-	"${DRESS_ON_ROOT}/vendor/godot-core-subset"
+	"${GUEST_RUNTIME_ROOT}/guest/godot_lite"
+	"${GUEST_RUNTIME_ROOT}/vendor/godot-core-subset"
 )
 target_compile_options(cassie_core PRIVATE
-	"SHELL:-include ${DRESS_ON_ROOT}/guest/godot_lite/gdl_prelude.h"
+	"SHELL:-include ${GUEST_RUNTIME_ROOT}/guest/godot_lite/gdl_prelude.h"
 	${CURVENET_STRICT_FP}
 )
 target_link_libraries(cassie_core PUBLIC
@@ -93,12 +93,12 @@ target_link_libraries(cassie_core PUBLIC
 # ones that see both it and Cassie (with the godot-lite prelude). The same
 # library links into curvenet.elf and into the native cassie_checks.exe.
 add_library(curvenet_core STATIC EXCLUDE_FROM_ALL
-	"${DRESS_ON_ROOT}/guest/curvenet/curvenet_api.cpp"
-	"${DRESS_ON_ROOT}/guest/curvenet/checks.cpp"
+	"${CURVENET_ROOT}/guest/curvenet/curvenet_api.cpp"
+	"${CURVENET_ROOT}/guest/curvenet/checks.cpp"
 )
-target_include_directories(curvenet_core PUBLIC "${DRESS_ON_ROOT}/guest/curvenet" "${DRESS_ON_ROOT}/guest/common")
+target_include_directories(curvenet_core PUBLIC "${CURVENET_ROOT}/guest/curvenet" "${GUEST_COMMON_ROOT}/guest/common" "${GUEST_COMMON_ROOT}/guest")
 target_compile_options(curvenet_core PRIVATE
-	"SHELL:-include ${DRESS_ON_ROOT}/guest/godot_lite/gdl_prelude.h"
+	"SHELL:-include ${GUEST_RUNTIME_ROOT}/guest/godot_lite/gdl_prelude.h"
 	${CURVENET_STRICT_FP}
 )
 target_link_libraries(curvenet_core PUBLIC cassie_core)
@@ -108,8 +108,8 @@ target_link_libraries(curvenet_core PUBLIC cassie_core)
 # native tree stops at curvenet_core. main.cpp includes api.hpp and
 # curvenet_api.h, nothing of Cassie's.
 if(COMMAND add_stage_elf AND NOT CURVENET_KERNELS_PENDING)
-	add_stage_elf(curvenet "${DRESS_ON_ROOT}/guest/curvenet/main.cpp")
-	target_include_directories(curvenet PRIVATE "${DRESS_ON_ROOT}/guest/curvenet")
+	add_stage_elf(curvenet "${CURVENET_ROOT}/guest/curvenet/main.cpp")
+	target_include_directories(curvenet PRIVATE "${CURVENET_ROOT}/guest/curvenet")
 	target_link_libraries(curvenet PRIVATE curvenet_core)
 endif()
 
