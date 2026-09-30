@@ -25,8 +25,8 @@
 #include "sketch/cassie_surface_manager.h"
 #include "solver/cassie_constraint_solver.h"
 
-#include "../common/mesh_wire.h"
-#include "../common/blake3.h"
+#include "common/mesh_wire.h"
+#include "common/blake3.h"
 
 #include <algorithm>
 #include <cmath>

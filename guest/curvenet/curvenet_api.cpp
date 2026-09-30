@@ -14,7 +14,7 @@
 
 #include "scene/resources/mesh.h"
 
-#include "../common/mesh_wire.h"
+#include "common/mesh_wire.h"
 
 #include <pmp/algorithms/remeshing.h>
 #include <pmp/surface_mesh.h>

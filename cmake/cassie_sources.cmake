@@ -4,11 +4,18 @@
 # the third-party lists glob them; the Cassie list is explicit because its
 # files split three ways by what they may see.
 
-get_filename_component(DRESS_ON_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
-set(CASSIE_SRC "${DRESS_ON_ROOT}/vendor/cassie/src")
-set(GEOGRAM_SUBSET "${DRESS_ON_ROOT}/vendor/geogram-subset")
-set(PMP_SUBSET "${DRESS_ON_ROOT}/vendor/pmp-subset")
-set(MWT_SUBSET "${DRESS_ON_ROOT}/vendor/mwt")
+get_filename_component(CURVENET_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+# The runtime and the shared headers are sibling checkouts in the manifest layout.
+if(NOT DEFINED GUEST_RUNTIME_ROOT)
+	get_filename_component(GUEST_RUNTIME_ROOT "${CURVENET_ROOT}/../../2-contract/guest-runtime" ABSOLUTE)
+endif()
+if(NOT DEFINED GUEST_COMMON_ROOT)
+	get_filename_component(GUEST_COMMON_ROOT "${CURVENET_ROOT}/../../2-contract/guest-common" ABSOLUTE)
+endif()
+set(CASSIE_SRC "${CURVENET_ROOT}/vendor/cassie/src")
+set(GEOGRAM_SUBSET "${CURVENET_ROOT}/vendor/geogram-subset")
+set(PMP_SUBSET "${CURVENET_ROOT}/vendor/pmp-subset")
+set(MWT_SUBSET "${CURVENET_ROOT}/vendor/mwt")
 
 # Cassie proper: compiled against guest/godot_lite through the force-included
 # gdl_prelude.h (namespace gdl), never against api.hpp.
