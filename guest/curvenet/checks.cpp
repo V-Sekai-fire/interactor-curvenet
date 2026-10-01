@@ -593,6 +593,40 @@ Out mesh_weld() {
 	return o;
 }
 
+// mesh_shell: an open tube in two halves (no caps), welded, closes at thickness 2 mm into one
+// shell: no boundary loop, every edge on two faces (2E = 3F), Euler characteristic 0, one
+// component; control: thickness 0 keeps the tube's 2 boundary loops.
+Out mesh_shell() {
+	const int half = 4, rows = 3, w = half + 1;
+	std::vector<std::vector<float>> pv(2);
+	std::vector<std::vector<int32_t>> pf(2);
+	for (int h = 0; h < 2; ++h) {
+		for (int j = 0; j <= rows; ++j) {
+			for (int i = 0; i <= half; ++i) {
+				const double a = 2 * Math::PI * (h * half + i) / (2 * half);
+				pv[size_t(h)].insert(pv[size_t(h)].end(), { float(0.2 * std::cos(a)), float(0.5 + 0.1 * j), float(0.2 * std::sin(a)) });
+			}
+		}
+		for (int j = 0; j < rows; ++j) {
+			for (int i = 0; i < half; ++i) {
+				const int32_t a = j * w + i, b = j * w + i + 1, c = (j + 1) * w + i + 1, d = (j + 1) * w + i;
+				pf[size_t(h)].insert(pf[size_t(h)].end(), { a, d, b, b, d, c });
+			}
+		}
+	}
+	const BuiltMesh s = build_mesh(pv, pf, 0, 1e-6, 0.002);
+	const BuiltMesh open = build_mesh(pv, pf, 0, 1e-6, 0);
+	const int sv = int(s.vertices.size() / 3), sf = int(s.triangles.size() / 3);
+	const int euler = sv - s.edges + sf;
+	Out o;
+	o.floats = s.vertices;
+	o.ints = { sv, s.edges, sf, s.components, int(s.loops.size()), euler, int(open.loops.size()) };
+	o.pass = s.loops.empty() && 2 * s.edges == 3 * sf && euler == 0 && s.components == 1 && open.loops.size() == 2;
+	o.detail = fmt("thickness 2 mm: V=%d E=%d F=%d, %d component, %d boundary loops, Euler %d; thickness 0 -> %d loops (control)",
+			sv, s.edges, sf, s.components, int(s.loops.size()), euler, int(open.loops.size()));
+	return o;
+}
+
 // A capped cylinder of radius r around the y axis from y0 to y1, nseg
 // segments around and nrow rows up, CCW-outward.
 void cylinder(float r, float y0, float y1, int nseg, int nrow, std::vector<float> &v, std::vector<int32_t> &f) {
@@ -878,6 +912,7 @@ const std::vector<std::pair<std::string, std::function<Out()>>> &table() {
 		{ "delaunay_small_scale", delaunay_small_scale },
 		{ "mesh_weld", mesh_weld },
 		{ "skirt_tube", skirt_tube },
+		{ "mesh_shell", mesh_shell },
 	};
 	return t;
 }

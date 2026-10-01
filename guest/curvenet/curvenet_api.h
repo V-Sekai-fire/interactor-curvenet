@@ -26,7 +26,8 @@ std::string reset();
 // split_closed (1), merge_eps (0.02), mirror (0; 1 = mirror across x=0),
 // boundary (0; a pen mode: a stroke begun while it is 1 is a boundary stroke,
 // the edge of an opening such as a skirt's waist or hem, and a cycle made
-// only of boundary strokes is an opening that gets no patch).
+// only of boundary strokes is an opening that gets no patch), thickness
+// (0.002; mesh_build's shell, 0 leaves the surface single-layered).
 std::string set_param(const std::string &name, double value);
 double get_param(const std::string &name);
 // The body the pen snaps to; also the sketch context's project_on_patch
@@ -64,7 +65,9 @@ std::vector<float> curvenet_knots();
 // Merge the active patches, weld vertices closer than weld_eps (<= 0: no
 // weld), orient every patch away from the body, and when
 // target_edge_length > 0 run PMP's uniform remesh with the boundary and the
-// seams between patches held as features.
+// seams between patches held as features; with thickness > 0 the surface then
+// becomes a closed shell, the drawn layer facing the body and an offset layer
+// facing out, joined at every boundary loop.
 // "ok patches=.. vertices=.. triangles=.. loops=.. components=.. euler=.."
 std::string mesh_build(double target_edge_length, double weld_eps);
 std::vector<float> mesh_vertices();
@@ -98,7 +101,7 @@ struct BuiltMesh {
 // The mesh_build core over explicit parts (each part a vertex/triangle pair).
 BuiltMesh build_mesh(const std::vector<std::vector<float>> &part_vertices,
 		const std::vector<std::vector<int32_t>> &part_triangles,
-		double target_edge_length, double weld_eps);
+		double target_edge_length, double weld_eps, double thickness = 0);
 // Counts written by the last pen_end / curvenet_build, for checks.
 struct Counts {
 	int edges = 0, nodes = 0, cycles = 0, openings = 0, curves = 0, knots = 0;
