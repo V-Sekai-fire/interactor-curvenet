@@ -133,6 +133,10 @@ static Variant mesh_boundary_loops() {
 	return packed(cn::mesh_boundary_loops());
 }
 
+static Variant mesh_rims() {
+	return packed(cn::mesh_rims());
+}
+
 static Variant mesh_patch_ids() {
 	return packed(cn::mesh_patch_ids());
 }
@@ -183,6 +187,7 @@ int main() {
 	ADD_API_FUNCTION(mesh_vertices, "PackedFloat32Array", "", "The built mesh's vertices");
 	ADD_API_FUNCTION(mesh_indices, "PackedInt32Array", "", "The built mesh's triangles");
 	ADD_API_FUNCTION(mesh_boundary_loops, "PackedInt32Array", "", "The built mesh's boundary loops");
+	ADD_API_FUNCTION(mesh_rims, "PackedInt32Array", "", "The drawn surface's boundary loops, open or closed into the shell");
 	ADD_API_FUNCTION(mesh_patch_ids, "PackedInt32Array", "", "Source patch per triangle (-1 after a remesh)");
 	ADD_API_FUNCTION(check, "String", "String name", "One Gate 4 check");
 	ADD_API_FUNCTION(check_all, "String", "", "Every Gate 4 check");

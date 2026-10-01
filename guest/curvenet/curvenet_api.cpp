@@ -40,6 +40,7 @@ struct Params {
 	double merge_eps = 0.02;
 	double mirror = 0;
 	double boundary = 0;
+	double thickness = 0.002;
 };
 
 struct SketcherDeleter {
@@ -231,10 +232,12 @@ std::string set_param(const std::string &name, double value) {
 			slot = &g_p.mirror;
 		} else if (name == "boundary") {
 			slot = &g_p.boundary;
+		} else if (name == "thickness") {
+			slot = &g_p.thickness;
 		}
 		if (slot == nullptr) {
 			return fail("unknown param '" + name +
-					"' (snap_radius, surface_offset, target_edge_length, split_closed, merge_eps, mirror, boundary)");
+					"' (snap_radius, surface_offset, target_edge_length, split_closed, merge_eps, mirror, boundary, thickness)");
 		}
 		if (!std::isfinite(value)) {
 			return fail(name + " must be finite");
@@ -260,6 +263,8 @@ double get_param(const std::string &name) {
 		return g_p.mirror;
 	} else if (name == "boundary") {
 		return g_p.boundary;
+	} else if (name == "thickness") {
+		return g_p.thickness;
 	}
 	return NAN;
 }
@@ -754,11 +759,66 @@ bool remesh(BuiltMesh &m, double target, std::string &err) {
 	return true;
 }
 
+// A cloth shell, double-sided in its geometry: the drawn layer, wound to face the body, and a copy
+// offset outward by thickness along the area-weighted vertex normals, joined by a quad along every
+// boundary edge, so each edge has exactly two faces.
+void solidify(BuiltMesh &m, double thickness) {
+	const size_t nv = m.vertices.size() / 3;
+	const std::vector<int32_t> f = m.triangles;
+	std::vector<double> n(3 * nv, 0.0);
+	std::map<std::pair<int32_t, int32_t>, size_t> owner;
+	for (size_t t = 0; t + 2 < f.size(); t += 3) {
+		const float *a = &m.vertices[3 * size_t(f[t])];
+		const float *b = &m.vertices[3 * size_t(f[t + 1])];
+		const float *c = &m.vertices[3 * size_t(f[t + 2])];
+		const double u[3] = { double(b[0] - a[0]), double(b[1] - a[1]), double(b[2] - a[2]) };
+		const double w[3] = { double(c[0] - a[0]), double(c[1] - a[1]), double(c[2] - a[2]) };
+		const double x[3] = { u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0] };
+		for (int k = 0; k < 3; ++k) {
+			for (int d = 0; d < 3; ++d) {
+				n[3 * size_t(f[t + k]) + d] += x[d];
+			}
+			owner[{ f[t + k], f[t + (k + 1) % 3] }] = t / 3;
+		}
+	}
+	std::vector<float> v = m.vertices;
+	v.resize(6 * nv);
+	for (size_t i = 0; i < nv; ++i) {
+		const double len = std::sqrt(n[3 * i] * n[3 * i] + n[3 * i + 1] * n[3 * i + 1] + n[3 * i + 2] * n[3 * i + 2]);
+		const double s = len > 0 ? thickness / len : 0;
+		for (int d = 0; d < 3; ++d) {
+			v[3 * (nv + i) + size_t(d)] = float(double(m.vertices[3 * i + size_t(d)]) + n[3 * i + size_t(d)] * s);
+		}
+	}
+	const int32_t off = int32_t(nv);
+	std::vector<int32_t> tris;
+	std::vector<int32_t> ids;
+	for (size_t t = 0; t + 2 < f.size(); t += 3) {
+		const int32_t id = t / 3 < m.patch_ids.size() ? m.patch_ids[t / 3] : -1;
+		tris.insert(tris.end(), { f[t], f[t + 2], f[t + 1], f[t] + off, f[t + 1] + off, f[t + 2] + off });
+		ids.insert(ids.end(), { id, id });
+	}
+	// A boundary edge a->b of the original winding: the drawn layer now holds b->a and the offset
+	// layer a'->b', so the quad a, b, b', a' closes both.
+	for (const std::pair<const std::pair<int32_t, int32_t>, size_t> &e : owner) {
+		const int32_t a = e.first.first, b = e.first.second;
+		if (owner.count({ b, a }) != 0) {
+			continue;
+		}
+		const int32_t id = e.second < m.patch_ids.size() ? m.patch_ids[e.second] : -1;
+		tris.insert(tris.end(), { a, b, b + off, a, b + off, a + off });
+		ids.insert(ids.end(), { id, id });
+	}
+	m.vertices = std::move(v);
+	m.triangles = std::move(tris);
+	m.patch_ids = std::move(ids);
+}
+
 } // namespace
 
 BuiltMesh build_mesh(const std::vector<std::vector<float>> &part_vertices,
 		const std::vector<std::vector<int32_t>> &part_triangles,
-		double target_edge_length, double weld_eps) {
+		double target_edge_length, double weld_eps, double thickness) {
 	BuiltMesh m;
 	std::vector<float> soup;
 	std::vector<int32_t> tris, ids;
@@ -798,6 +858,11 @@ BuiltMesh build_mesh(const std::vector<std::vector<float>> &part_vertices,
 		}
 	}
 	topology(m);
+	m.rims = m.loops;
+	if (thickness > 0 && !m.triangles.empty()) {
+		solidify(m, thickness);
+		topology(m);
+	}
 	return m;
 }
 
@@ -810,13 +875,13 @@ std::string mesh_build(double target_edge_length, double weld_eps) {
 			pf.emplace_back();
 			patch_arrays(p, pv.back(), pf.back());
 		}
-		g_mesh = build_mesh(pv, pf, target_edge_length, weld_eps);
+		g_mesh = build_mesh(pv, pf, target_edge_length, weld_eps, g_p.thickness);
 		if (!g_mesh.error.empty()) {
 			return fail(g_mesh.error);
 		}
 		const int nv = int(g_mesh.vertices.size() / 3), nf = int(g_mesh.triangles.size() / 3);
-		return fmt("ok patches=%d vertices=%d triangles=%d loops=%d components=%d euler=%d", int(pv.size()), nv, nf,
-				int(g_mesh.loops.size()), g_mesh.components, nv - g_mesh.edges + nf);
+		return fmt("ok patches=%d vertices=%d triangles=%d loops=%d rims=%d components=%d euler=%d", int(pv.size()), nv, nf,
+				int(g_mesh.loops.size()), int(g_mesh.rims.size()), g_mesh.components, nv - g_mesh.edges + nf);
 	});
 }
 
@@ -830,6 +895,10 @@ std::vector<int32_t> mesh_indices() {
 
 std::vector<int32_t> mesh_boundary_loops() {
 	return mesh_wire::encode_loops(g_mesh.loops);
+}
+
+std::vector<int32_t> mesh_rims() {
+	return mesh_wire::encode_loops(g_mesh.rims);
 }
 
 std::vector<int32_t> mesh_patch_ids() {
