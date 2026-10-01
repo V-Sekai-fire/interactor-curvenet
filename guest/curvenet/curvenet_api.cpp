@@ -857,10 +857,12 @@ BuiltMesh build_mesh(const std::vector<std::vector<float>> &part_vertices,
 			return m;
 		}
 	}
+	topology(m);
+	m.rims = m.loops;
 	if (thickness > 0 && !m.triangles.empty()) {
 		solidify(m, thickness);
+		topology(m);
 	}
-	topology(m);
 	return m;
 }
 
@@ -878,8 +880,8 @@ std::string mesh_build(double target_edge_length, double weld_eps) {
 			return fail(g_mesh.error);
 		}
 		const int nv = int(g_mesh.vertices.size() / 3), nf = int(g_mesh.triangles.size() / 3);
-		return fmt("ok patches=%d vertices=%d triangles=%d loops=%d components=%d euler=%d", int(pv.size()), nv, nf,
-				int(g_mesh.loops.size()), g_mesh.components, nv - g_mesh.edges + nf);
+		return fmt("ok patches=%d vertices=%d triangles=%d loops=%d rims=%d components=%d euler=%d", int(pv.size()), nv, nf,
+				int(g_mesh.loops.size()), int(g_mesh.rims.size()), g_mesh.components, nv - g_mesh.edges + nf);
 	});
 }
 
@@ -893,6 +895,10 @@ std::vector<int32_t> mesh_indices() {
 
 std::vector<int32_t> mesh_boundary_loops() {
 	return mesh_wire::encode_loops(g_mesh.loops);
+}
+
+std::vector<int32_t> mesh_rims() {
+	return mesh_wire::encode_loops(g_mesh.rims);
 }
 
 std::vector<int32_t> mesh_patch_ids() {

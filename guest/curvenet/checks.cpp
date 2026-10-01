@@ -444,8 +444,9 @@ std::string pen_circle(float r, float lat, float sweep, int n) {
 
 // pen_sphere: one closed stroke at 30 degrees latitude, drawn 1 cm off an
 // r = 0.5 icosphere, snaps onto it (every sample within [0.499, 0.5025] of
-// the centre) and gives 1 patch; mesh_build gives 1 boundary loop, with and
-// without the PMP remesh; curvenet_build gives 2 curves on 2 knots (the
+// the centre) and gives 1 patch; mesh_build gives 1 rim closed into the shell
+// (0 boundary loops), with and without the PMP remesh; curvenet_build gives 2
+// curves on 2 knots (the
 // sketcher splits a closed stroke into two edges). Controls: a 270 degree
 // arc gives 0 patches, and split_closed = 0 gives 0 patches (a self-loop
 // edge bounds nothing).
@@ -469,10 +470,10 @@ Out pen_sphere() {
 		snapped += (r >= 0.499 && r <= 0.5025) ? 1 : 0;
 	}
 	const std::string m0 = mesh_build(0, 1e-5);
-	const int loops = kv(m0, "loops"), tris = kv(m0, "triangles");
+	const int loops = kv(m0, "loops"), rims = kv(m0, "rims"), tris = kv(m0, "triangles");
 	append(o.floats, mesh_vertices());
 	const std::string m1 = mesh_build(0.02, 1e-5);
-	const int loops_remeshed = kv(m1, "loops"), tris_remeshed = kv(m1, "triangles");
+	const int loops_remeshed = kv(m1, "loops"), rims_remeshed = kv(m1, "rims"), tris_remeshed = kv(m1, "triangles");
 	const std::string cb = curvenet_build();
 	const int curves = counts().curves, knots = counts().knots;
 	append(o.floats, curvenet_curves());
@@ -492,14 +493,16 @@ Out pen_sphere() {
 	reset();
 
 	const int n_samples = int(samples.size() / 3);
-	o.ints = { patches, n_samples, snapped, loops, tris, loops_remeshed, tris_remeshed, curves, knots, arc_patches,
-		whole_patches };
-	o.pass = patches == 1 && n_samples > 0 && snapped == n_samples && loops == 1 && tris > 0 && loops_remeshed == 1 &&
-			tris_remeshed > 0 && curves == 2 && knots == 2 && arc_patches == 0 && whole_patches == 0;
-	o.detail = fmt("closed stroke -> %d patch, %d/%d samples snapped; mesh %d tris %d loop, remeshed %d tris %d loop; "
-				   "curvenet %d curves %d knots; 270-degree arc -> %d patches, split_closed=0 -> %d (controls) [%s | %s | %s]",
-			patches, snapped, n_samples, tris, loops, tris_remeshed, loops_remeshed, curves, knots, arc_patches,
-			whole_patches, e.c_str(), m1.c_str(), cb.c_str());
+	o.ints = { patches, n_samples, snapped, loops, rims, tris, loops_remeshed, rims_remeshed, tris_remeshed, curves, knots,
+		arc_patches, whole_patches };
+	o.pass = patches == 1 && n_samples > 0 && snapped == n_samples && loops == 0 && rims == 1 && tris > 0 &&
+			loops_remeshed == 0 && rims_remeshed == 1 && tris_remeshed > 0 && curves == 2 && knots == 2 && arc_patches == 0 &&
+			whole_patches == 0;
+	o.detail = fmt("closed stroke -> %d patch, %d/%d samples snapped; mesh %d tris %d rim %d loops, remeshed %d tris %d rim "
+				   "%d loops; curvenet %d curves %d knots; 270-degree arc -> %d patches, split_closed=0 -> %d (controls) "
+				   "[%s | %s | %s]",
+			patches, snapped, n_samples, tris, rims, loops, tris_remeshed, rims_remeshed, loops_remeshed, curves, knots,
+			arc_patches, whole_patches, e.c_str(), m1.c_str(), cb.c_str());
 	return o;
 }
 
@@ -594,8 +597,9 @@ Out mesh_weld() {
 }
 
 // mesh_shell: an open tube in two halves (no caps), welded, closes at thickness 2 mm into one
-// shell: no boundary loop, every edge on two faces (2E = 3F), Euler characteristic 0, one
-// component; control: thickness 0 keeps the tube's 2 boundary loops.
+// shell: no boundary loop, its 2 rims kept, every edge on two faces (2E = 3F), Euler
+// characteristic 0, one component, consistently wound; controls: thickness 0 keeps the tube's 2
+// boundary loops, and one face flipped puts directed edges on two faces.
 Out mesh_shell() {
 	const int half = 4, rows = 3, w = half + 1;
 	std::vector<std::vector<float>> pv(2);
@@ -618,12 +622,29 @@ Out mesh_shell() {
 	const BuiltMesh open = build_mesh(pv, pf, 0, 1e-6, 0);
 	const int sv = int(s.vertices.size() / 3), sf = int(s.triangles.size() / 3);
 	const int euler = sv - s.edges + sf;
+	const std::function<int(const std::vector<int32_t> &)> doubled = [](const std::vector<int32_t> &f) {
+		std::map<std::pair<int32_t, int32_t>, int> directed;
+		int n = 0;
+		for (size_t t = 0; t + 2 < f.size(); t += 3) {
+			for (int e = 0; e < 3; ++e) {
+				n += ++directed[{ f[t + size_t(e)], f[t + size_t(e + 1) % 3] }] == 2 ? 1 : 0;
+			}
+		}
+		return n;
+	};
+	std::vector<int32_t> flipped = s.triangles;
+	std::swap(flipped[1], flipped[2]);
+	const int twice = doubled(s.triangles), flipped_twice = doubled(flipped);
 	Out o;
 	o.floats = s.vertices;
-	o.ints = { sv, s.edges, sf, s.components, int(s.loops.size()), euler, int(open.loops.size()) };
-	o.pass = s.loops.empty() && 2 * s.edges == 3 * sf && euler == 0 && s.components == 1 && open.loops.size() == 2;
-	o.detail = fmt("thickness 2 mm: V=%d E=%d F=%d, %d component, %d boundary loops, Euler %d; thickness 0 -> %d loops (control)",
-			sv, s.edges, sf, s.components, int(s.loops.size()), euler, int(open.loops.size()));
+	o.ints = { sv, s.edges, sf, s.components, int(s.loops.size()), int(s.rims.size()), euler, twice, int(open.loops.size()),
+		flipped_twice };
+	o.pass = s.loops.empty() && s.rims.size() == 2 && 2 * s.edges == 3 * sf && euler == 0 && s.components == 1 &&
+			twice == 0 && open.loops.size() == 2 && flipped_twice > 0;
+	o.detail = fmt("thickness 2 mm: V=%d E=%d F=%d, %d component, %d boundary loops, %d rims, Euler %d, %d directed edges "
+				   "used twice; thickness 0 -> %d loops, one face flipped -> %d directed edges used twice (controls)",
+			sv, s.edges, sf, s.components, int(s.loops.size()), int(s.rims.size()), euler, twice, int(open.loops.size()),
+			flipped_twice);
 	return o;
 }
 
@@ -753,9 +774,10 @@ std::string draw_skirt(const Skirt &s, bool boundary, const std::string &drop) {
 //   - find_cycles sees the 2 panels and the 2 caps; the caps are made only of
 //     boundary strokes, so they are openings: 2 cycles, 2 openings, 2 patches,
 //     each a panel (it touches both rings and both seams), one per side;
-//   - mesh_build welds them into 1 component with 2 boundary loops (one at
-//     each ring), Euler characteristic 0, every interior edge shared by two
-//     triangles in opposite directions and every triangle facing outward;
+//   - mesh_build welds them into 1 component with 2 rims (one at each ring)
+//     and closes them into the shell: 0 boundary loops, every edge on two
+//     triangles in opposite directions, Euler characteristic 0, the offset
+//     layer facing outward and the drawn layer facing the body;
 //     mesh_patch_ids names both panels;
 //   - the PMP remesh (0.02) keeps all that, and every remeshed triangle gets
 //     the patch of its own side (it used to get -1).
@@ -794,20 +816,24 @@ Out skirt_tube() {
 	// The welded mesh and its topology, orientation and patch ids; the same
 	// after the PMP remesh.
 	struct Topo {
-		int components = -1, loops = -1, euler = 0, loops_at_rings = 0, twice = -1, inward = -1, unassigned = -1,
-			wrong_side = -1, id_count = 0;
+		int components = -1, loops = -1, rims = -1, euler = 0, rims_at_rings = 0, twice = -1, not_two = -1, inner = 0,
+			outer = 0, inward = -1, outward = -1, unassigned = -1, wrong_side = -1, id_count = 0;
 	};
 	auto topo = [&](const std::string &answer) {
 		Topo t;
 		t.components = kv(answer, "components");
 		t.loops = kv(answer, "loops");
+		t.rims = kv(answer, "rims");
 		const std::vector<float> v = mesh_vertices();
+		// The shell's drawn layer keeps the surface's vertex numbers; the offset layer is the upper half.
+		const int32_t half = int32_t(v.size() / 6);
 		const std::vector<int32_t> f = mesh_indices(), ids = mesh_patch_ids();
 		std::map<std::pair<int32_t, int32_t>, int> directed;
 		std::map<std::pair<int32_t, int32_t>, int> undirected;
 		std::map<int32_t, int> id_seen;
 		t.twice = 0;
 		t.inward = 0;
+		t.outward = 0;
 		t.unassigned = 0;
 		t.wrong_side = 0;
 		for (size_t k = 0; k + 2 < f.size(); k += 3) {
@@ -820,7 +846,15 @@ Out skirt_tube() {
 			}
 			const Vector3 n = (p[1] - p[0]).cross(p[2] - p[0]);
 			const Vector3 c = (p[0] + p[1] + p[2]) / real_t(3);
-			t.inward += n.dot(Vector3(c.x, 0, c.z)) <= 0 ? 1 : 0;
+			const bool in = n.dot(Vector3(c.x, 0, c.z)) <= 0;
+			const int32_t lo = std::min({ f[k], f[k + 1], f[k + 2] }), hi = std::max({ f[k], f[k + 1], f[k + 2] });
+			if (lo >= half) {
+				t.outer += 1;
+				t.inward += in ? 1 : 0;
+			} else if (hi < half) {
+				t.inner += 1;
+				t.outward += in ? 0 : 1;
+			}
 			const int32_t id = k / 3 < ids.size() ? ids[k / 3] : -1;
 			id_seen[id] += 1;
 			if (id < 0 || id >= patches) {
@@ -832,12 +866,16 @@ Out skirt_tube() {
 		for (const auto &kv2 : directed) {
 			t.twice += kv2.second > 1 ? 1 : 0;
 		}
+		t.not_two = 0;
+		for (const std::pair<const std::pair<int32_t, int32_t>, int> &kv2 : undirected) {
+			t.not_two += kv2.second != 2 ? 1 : 0;
+		}
 		t.euler = int(v.size() / 3) - int(undirected.size()) + int(f.size() / 3);
 		t.id_count = int(id_seen.size());
-		std::vector<std::vector<int32_t>> loops;
-		mesh_wire::decode_loops(mesh_boundary_loops(), loops);
+		std::vector<std::vector<int32_t>> rims;
+		mesh_wire::decode_loops(mesh_rims(), rims);
 		bool waist_loop = false, hem_loop = false;
-		for (const std::vector<int32_t> &l : loops) {
+		for (const std::vector<int32_t> &l : rims) {
 			bool all_w = true, all_h = true;
 			for (int32_t i : l) {
 				all_w = all_w && std::fabs(v[3 * size_t(i) + 1] - waist_y) < 0.03f;
@@ -846,7 +884,7 @@ Out skirt_tube() {
 			waist_loop = waist_loop || all_w;
 			hem_loop = hem_loop || all_h;
 		}
-		t.loops_at_rings = int(waist_loop) + int(hem_loop);
+		t.rims_at_rings = int(waist_loop) + int(hem_loop);
 		return t;
 	};
 	const std::string m0 = mesh_build(0, 1e-5);
@@ -875,26 +913,31 @@ Out skirt_tube() {
 	set_body({}, {});
 	reset();
 
-	o.ints = { nodes, edges, knots, deg3, curves, cycles, openings, patches, panels, sides, t0.components, t0.loops, t0.euler,
-		t0.loops_at_rings, t0.twice, t0.inward, t0.id_count, t0.unassigned, t0.wrong_side, t1.components, t1.loops, t1.euler,
-		t1.loops_at_rings, t1.twice, t1.inward, t1.id_count, t1.unassigned, t1.wrong_side, drop_patches, drop_panels,
+	o.ints = { nodes, edges, knots, deg3, curves, cycles, openings, patches, panels, sides, t0.components, t0.loops, t0.rims,
+		t0.euler, t0.rims_at_rings, t0.twice, t0.not_two, t0.inner, t0.outer, t0.inward, t0.outward, t0.id_count,
+		t0.unassigned, t0.wrong_side, t1.components, t1.loops, t1.rims, t1.euler, t1.rims_at_rings, t1.twice, t1.not_two,
+		t1.inner, t1.outer, t1.inward, t1.outward, t1.id_count, t1.unassigned, t1.wrong_side, drop_patches, drop_panels,
 		plain_patches, plain_panels, plain_caps };
 	auto good = [](const Topo &t) {
-		return t.components == 1 && t.loops == 2 && t.euler == 0 && t.loops_at_rings == 2 && t.twice == 0 && t.inward == 0 &&
-				t.id_count == 2 && t.unassigned == 0 && t.wrong_side == 0;
+		return t.components == 1 && t.loops == 0 && t.rims == 2 && t.euler == 0 && t.rims_at_rings == 2 && t.twice == 0 &&
+				t.not_two == 0 && t.inner > 0 && t.outer == t.inner && t.inward == 0 && t.outward == 0 && t.id_count == 2 &&
+				t.unassigned == 0 && t.wrong_side == 0;
 	};
 	o.pass = nodes == 4 && edges == 6 && knots == 4 && deg3 == 4 && curves == 6 && cycles == 2 && openings == 2 &&
 			patches == 2 && panels == 2 && sides == 0 && good(t0) && good(t1) && drop_panels == 0 && plain_patches == 4 &&
 			plain_panels == 2 && plain_caps == 2;
+	const std::function<std::string(const Topo &)> shell = [](const Topo &t) {
+		return fmt("%d component, %d rims (%d at the rings), %d boundary loops, Euler %d, %d directed edges used twice, %d "
+				   "edges not on two faces, %d outer faces (%d facing in), %d inner (%d facing out), %d patch ids (%d "
+				   "unassigned, %d on the wrong side)",
+				t.components, t.rims, t.rims_at_rings, t.loops, t.euler, t.twice, t.not_two, t.outer, t.inward, t.inner,
+				t.outward, t.id_count, t.unassigned, t.wrong_side);
+	};
 	o.detail = fmt("rings as boundary strokes -> %d knots (%d of degree 3), %d curves, %d cycles + %d openings, %d patches, "
-				   "%d panels (one per side: %s); mesh: %d component, %d loops at the rings, Euler %d, %d directed edges used "
-				   "twice, %d inward, %d patch ids (%d unassigned, %d on the wrong side); remeshed: %d component, %d loops at "
-				   "the rings, Euler %d, %d ids, %d unassigned, %d on the wrong side; back seam dropped -> %d panels (%d "
-				   "patches), rings not boundary -> %d patches, %d caps (controls)",
-			knots, deg3, curves, cycles, openings, patches, panels, sides == 0 ? "yes" : "NO", t0.components,
-			t0.loops_at_rings, t0.euler, t0.twice, t0.inward, t0.id_count, t0.unassigned, t0.wrong_side, t1.components,
-			t1.loops_at_rings, t1.euler, t1.id_count, t1.unassigned, t1.wrong_side, drop_panels, drop_patches, plain_patches,
-			plain_caps) +
+				   "%d panels (one per side: %s); shell: %s; remeshed: %s; back seam dropped -> %d panels (%d patches), "
+				   "rings not boundary -> %d patches, %d caps (controls)",
+			knots, deg3, curves, cycles, openings, patches, panels, sides == 0 ? "yes" : "NO", shell(t0).c_str(),
+			shell(t1).c_str(), drop_panels, drop_patches, plain_patches, plain_caps) +
 			" [" + e + " | " + m0 + " | " + m1 + " | " + cb + " | " + drop + " | " + plain + "]";
 	return o;
 }

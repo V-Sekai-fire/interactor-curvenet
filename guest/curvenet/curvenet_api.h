@@ -68,11 +68,14 @@ std::vector<float> curvenet_knots();
 // seams between patches held as features; with thickness > 0 the surface then
 // becomes a closed shell, the drawn layer facing the body and an offset layer
 // facing out, joined at every boundary loop.
-// "ok patches=.. vertices=.. triangles=.. loops=.. components=.. euler=.."
+// "ok patches=.. vertices=.. triangles=.. loops=.. rims=.. components=.. euler=.."
 std::string mesh_build(double target_edge_length, double weld_eps);
 std::vector<float> mesh_vertices();
 std::vector<int32_t> mesh_indices();
 std::vector<int32_t> mesh_boundary_loops();
+// The drawn surface's boundary loops (a skirt's waist and hem), in the drawn
+// layer's vertex numbers; with thickness 0 the same as mesh_boundary_loops.
+std::vector<int32_t> mesh_rims();
 // One per triangle: the index of the patch (as patch_vertices numbers them)
 // it came from; after a remesh, the patch nearest its centroid.
 std::vector<int32_t> mesh_patch_ids();
@@ -94,6 +97,7 @@ struct BuiltMesh {
 	std::vector<int32_t> triangles;
 	std::vector<int32_t> patch_ids;
 	std::vector<std::vector<int32_t>> loops;
+	std::vector<std::vector<int32_t>> rims;
 	int components = 0;
 	int edges = 0;
 	std::string error;
