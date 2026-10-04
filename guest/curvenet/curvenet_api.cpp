@@ -41,6 +41,8 @@ struct Params {
 	double mirror = 0;
 	double boundary = 0;
 	double thickness = 0.002;
+	double defer_meshing = 0;
+	double incremental_cycles = 0;
 };
 
 struct SketcherDeleter {
@@ -76,6 +78,8 @@ CassieSketcher *sketcher() {
 	CassieSketcher *sk = g_sk.get();
 	sk->set_split_closed_strokes(g_p.split_closed != 0);
 	sk->set_boundary_strokes(g_p.boundary != 0);
+	sk->get_surface_manager()->set_defer_meshing(g_p.defer_meshing != 0);
+	sk->get_sketch_graph()->set_incremental_cycles(g_p.incremental_cycles != 0);
 	sk->get_sketch_graph()->set_merge_epsilon(real_t(g_p.merge_eps));
 	sk->get_surface_manager()->set_target_edge_length(real_t(g_p.target_edge_length));
 	Ref<CassieSketchContext> ctx = sk->get_sketch_context();
@@ -234,10 +238,14 @@ std::string set_param(const std::string &name, double value) {
 			slot = &g_p.boundary;
 		} else if (name == "thickness") {
 			slot = &g_p.thickness;
+		} else if (name == "defer_meshing") {
+			slot = &g_p.defer_meshing;
+		} else if (name == "incremental_cycles") {
+			slot = &g_p.incremental_cycles;
 		}
 		if (slot == nullptr) {
 			return fail("unknown param '" + name +
-					"' (snap_radius, surface_offset, target_edge_length, split_closed, merge_eps, mirror, boundary, thickness)");
+					"' (snap_radius, surface_offset, target_edge_length, split_closed, merge_eps, mirror, boundary, thickness, defer_meshing, incremental_cycles)");
 		}
 		if (!std::isfinite(value)) {
 			return fail(name + " must be finite");
@@ -317,11 +325,11 @@ static std::string _commit_report(CassieSketcher *sk, const Dictionary &r) {
 	for (int i = 0; i < cycles.size(); ++i) {
 		(g->is_opening(cycles[i]) ? g_counts.openings : g_counts.cycles) += 1;
 	}
-	return fmt("ok=%d valid=%d closed=%d new_patches=%d patches=%d edges=%d nodes=%d cycles=%d openings=%d",
+	return fmt("ok=%d valid=%d closed=%d new_patches=%d patches=%d edges=%d nodes=%d cycles=%d openings=%d junction_misses=%d",
 			int(bool(r.get("ok", false))), int(bool(r.get("is_valid", false))),
 			int(fs.is_valid() && fs->is_closed_loop()), int(np.size()),
 			sk->get_surface_manager()->get_patch_count(), g_counts.edges, g_counts.nodes, g_counts.cycles,
-			g_counts.openings);
+			g_counts.openings, sk->get_junction_misses());
 }
 
 std::string pen_end(int id) {
@@ -343,6 +351,43 @@ std::string pen_end_with_crossings(int id, const std::vector<float> &crossings_x
 		}
 		return _commit_report(sk, sk->commit_stroke_with_crossings(id, crossings));
 	});
+}
+
+std::string pen_end_recorded(int id, const std::vector<float> &junctions_xyz, int source) {
+	return guarded([&] {
+		CassieSketcher *sk = sketcher();
+		PackedVector3Array junctions;
+		for (size_t i = 0; i + 2 < junctions_xyz.size(); i += 3) {
+			junctions.push_back(Vector3(junctions_xyz[i], junctions_xyz[i + 1], junctions_xyz[i + 2]));
+		}
+		return _commit_report(sk, sk->commit_stroke_recorded(id, junctions, source));
+	});
+}
+
+int mesh_deferred(int max_count) {
+	return g_sk ? g_sk->get_surface_manager()->mesh_deferred(max_count) : 0;
+}
+
+std::vector<int32_t> cycle_sources() {
+	std::vector<int32_t> out;
+	if (!g_sk) {
+		return out;
+	}
+	Ref<CassieSketchGraph> g = g_sk->get_sketch_graph();
+	const Array cycles = g->find_cycles();
+	for (int i = 0; i < cycles.size(); ++i) {
+		const PackedInt32Array c = cycles[i];
+		for (int k = 0; k < c.size(); ++k) {
+			Ref<CassieSketchGraphEdge> e = g->get_edge(c[k]);
+			out.push_back(e.is_valid() ? e->get_source_polyline_idx() : -2);
+		}
+		out.push_back(-1000);
+	}
+	return out;
+}
+
+int find_cycles_count() {
+	return g_sk ? int(g_sk->get_sketch_graph()->find_cycles().size()) : -1;
 }
 
 int patch_count() {

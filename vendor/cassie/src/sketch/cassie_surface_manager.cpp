@@ -223,7 +223,11 @@ Dictionary CassieSurfaceManager::update() {
 		seen_sigs.insert(sig);
 
 		// Already active or already pending?  Nothing to do.
-		if (active_patches.has(sig)) {
+		if (active_patches.has(sig) || deferred.has(sig)) {
+			continue;
+		}
+		if (defer_meshing) {
+			deferred.insert(sig, cycle);
 			continue;
 		}
 		bool already_pending = false;
@@ -289,6 +293,15 @@ Dictionary CassieSurfaceManager::update() {
 	for (uint32_t i = 0; i < stale.size(); ++i) {
 		active_patches.erase(stale[i]);
 	}
+	LocalVector<String> stale_deferred;
+	for (const KeyValue<String, PackedInt32Array> &kv : deferred) {
+		if (!seen_sigs.has(kv.key)) {
+			stale_deferred.push_back(kv.key);
+		}
+	}
+	for (uint32_t i = 0; i < stale_deferred.size(); ++i) {
+		deferred.erase(stale_deferred[i]);
+	}
 
 	// Also cancel any pending jobs whose cycle disappeared.
 	LocalVector<WorkerThreadPool::TaskID> dead_jobs;
@@ -322,9 +335,28 @@ TypedArray<CassieSurfacePatch> CassieSurfaceManager::get_patches() const {
 	return out;
 }
 
+int CassieSurfaceManager::mesh_deferred(int p_max_count) {
+	LocalVector<String> done;
+	for (const KeyValue<String, PackedInt32Array> &kv : deferred) {
+		if (int(done.size()) >= p_max_count) {
+			break;
+		}
+		Ref<CassieSurfacePatch> patch = _materialize_patch_sync(kv.value);
+		if (patch.is_valid()) {
+			active_patches.insert(kv.key, patch);
+		}
+		done.push_back(kv.key);
+	}
+	for (uint32_t i = 0; i < done.size(); ++i) {
+		deferred.erase(done[i]);
+	}
+	return deferred.size();
+}
+
 void CassieSurfaceManager::clear() {
 	_cancel_all_pending();
 	active_patches.clear();
+	deferred.clear();
 }
 
 // Helper: serialize a Vector3 as the upstream {"x","y","z"} dict shape.

@@ -66,6 +66,23 @@ static Variant pen_end_with_crossings(int id, PackedArray<float> crossings) {
 	return text(cn::pen_end_with_crossings(id, crossings.fetch()));
 }
 
+// End a stroke as recorded, joined only at its recorded junctions (3 floats a point).
+static Variant pen_end_recorded(int id, PackedArray<float> junctions, int source) {
+	return text(cn::pen_end_recorded(id, junctions.fetch(), source));
+}
+
+static Variant mesh_deferred(int max_count) {
+	return cn::mesh_deferred(max_count);
+}
+
+static Variant cycle_sources() {
+	return packed(cn::cycle_sources());
+}
+
+static Variant find_cycles_count() {
+	return cn::find_cycles_count();
+}
+
 // A whole stroke in one call: xyzp holds 4 floats per sample (x, y, z,
 // pressure); answers pen_end's line.
 static Variant pen_stroke(PackedArray<float> xyzp) {
@@ -172,6 +189,11 @@ int main() {
 			"Commit: ok valid closed new_patches patches edges nodes cycles");
 	ADD_API_FUNCTION(pen_end_with_crossings, "String", "int id, PackedFloat32Array crossings",
 			"End a stroke, splitting at guest-supplied crossings (3 floats a point)");
+	ADD_API_FUNCTION(pen_end_recorded, "String", "int id, PackedFloat32Array junctions, int source",
+			"End a recorded stroke, joined at its recorded junctions (3 floats a point)");
+	ADD_API_FUNCTION(mesh_deferred, "int", "int max_count", "Mesh up to max_count deferred cycles; answers how many are left");
+	ADD_API_FUNCTION(cycle_sources, "PackedInt32Array", "", "Each cycle's edge source strokes, -1000 between cycles");
+	ADD_API_FUNCTION(find_cycles_count, "int", "", "Walk the whole graph once and count its cycles");
 	ADD_API_FUNCTION(pen_stroke, "String", "PackedFloat32Array xyzp", "A whole stroke, 4 floats per sample");
 	ADD_API_FUNCTION(patch_count, "int", "", "Active surface patches");
 	ADD_API_FUNCTION(patch_vertices, "PackedFloat32Array", "int i", "Patch i's vertices (mesh_wire)");

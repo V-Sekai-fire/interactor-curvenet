@@ -82,6 +82,10 @@ void CassieSketchGraphEdge::_bind_methods() {
 void CassieSketchGraph::clear() {
 	nodes.clear();
 	edges.clear();
+	node_cells.clear();
+	seg_cells.clear();
+	live_cycles.clear();
+	edge_cycle_count.clear();
 	next_node_id = 0;
 	next_edge_id = 0;
 }
@@ -111,6 +115,7 @@ int CassieSketchGraph::_find_or_create_node(const Vector3 &p_pos,
 	}
 	node->set_normal(n);
 	nodes.insert(id, node);
+	_index_node(id);
 	return id;
 }
 
@@ -315,6 +320,7 @@ int CassieSketchGraph::add_stroke(const PackedVector3Array &p_points,
 	edge->set_node_a_id(node_a);
 	edge->set_node_b_id(node_b);
 	edges.insert(eid, edge);
+	_index_edge(eid);
 
 	nodes[node_a]->add_edge_id(eid);
 	nodes[node_b]->add_edge_id(eid);
@@ -324,6 +330,272 @@ int CassieSketchGraph::add_stroke(const PackedVector3Array &p_points,
 	_update_node_normal(node_a);
 	_update_node_normal(node_b);
 	return eid;
+}
+
+int CassieSketchGraph::create_node(const Vector3 &p_position) {
+	const int id = next_node_id++;
+	Ref<CassieSketchGraphNode> node;
+	node.instantiate();
+	node->set_id(id);
+	node->set_position(p_position);
+	node->set_normal(Vector3(0, 1, 0));
+	nodes.insert(id, node);
+	_index_node(id);
+	return id;
+}
+
+int CassieSketchGraph::add_edge_between(const PackedVector3Array &p_points,
+		int p_node_a, int p_node_b, bool p_boundary, int p_source) {
+	if (p_points.size() < 2 || !nodes.has(p_node_a) || !nodes.has(p_node_b)) {
+		return -1;
+	}
+	const int eid = next_edge_id++;
+	Ref<CassieSketchGraphEdge> edge;
+	edge.instantiate();
+	edge->set_id(eid);
+	edge->set_points(p_points);
+	edge->set_node_a_id(p_node_a);
+	edge->set_node_b_id(p_node_b);
+	edge->set_boundary(p_boundary);
+	edge->set_source_polyline_idx(p_source);
+	edges.insert(eid, edge);
+	_index_edge(eid);
+	nodes[p_node_a]->add_edge_id(eid);
+	if (p_node_b != p_node_a) {
+		nodes[p_node_b]->add_edge_id(eid);
+	}
+	_update_node_sharpness(p_node_a);
+	_update_node_sharpness(p_node_b);
+	_update_node_normal(p_node_a);
+	_update_node_normal(p_node_b);
+	return eid;
+}
+
+int CassieSketchGraph::get_edge_node(int p_edge_id, int p_end) const {
+	HashMap<int, Ref<CassieSketchGraphEdge>>::ConstIterator it = edges.find(p_edge_id);
+	if (!it) {
+		return -1;
+	}
+	return p_end == 0 ? it->value->get_node_a_id() : it->value->get_node_b_id();
+}
+
+static const real_t k_cell = real_t(0.05);
+
+static int _cell_of(real_t p_v) {
+	return int(Math::floor(p_v / k_cell));
+}
+
+static int64_t _cell_key(int p_x, int p_y, int p_z) {
+	return (int64_t(p_x & 0x1FFFFF) << 42) | (int64_t(p_y & 0x1FFFFF) << 21) | int64_t(p_z & 0x1FFFFF);
+}
+
+void CassieSketchGraph::_index_node(int p_id) {
+	const Vector3 p = nodes[p_id]->get_position();
+	node_cells[_cell_key(_cell_of(p.x), _cell_of(p.y), _cell_of(p.z))].push_back(p_id);
+}
+
+void CassieSketchGraph::_index_edge(int p_eid) {
+	const PackedVector3Array pts = edges[p_eid]->get_points();
+	for (int k = 0; k + 1 < pts.size(); ++k) {
+		const Vector3 lo = pts[k].min(pts[k + 1]);
+		const Vector3 hi = pts[k].max(pts[k + 1]);
+		for (int x = _cell_of(lo.x); x <= _cell_of(hi.x); ++x) {
+			for (int y = _cell_of(lo.y); y <= _cell_of(hi.y); ++y) {
+				for (int z = _cell_of(lo.z); z <= _cell_of(hi.z); ++z) {
+					seg_cells[_cell_key(x, y, z)].push_back({ p_eid, k });
+				}
+			}
+		}
+	}
+}
+
+int CassieSketchGraph::_node_at(const Vector3 &p_pos, real_t p_tol) const {
+	int best = -1;
+	real_t best_d = p_tol;
+	for (int x = _cell_of(p_pos.x - p_tol); x <= _cell_of(p_pos.x + p_tol); ++x) {
+		for (int y = _cell_of(p_pos.y - p_tol); y <= _cell_of(p_pos.y + p_tol); ++y) {
+			for (int z = _cell_of(p_pos.z - p_tol); z <= _cell_of(p_pos.z + p_tol); ++z) {
+				HashMap<int64_t, LocalVector<int>>::ConstIterator c = node_cells.find(_cell_key(x, y, z));
+				if (!c) {
+					continue;
+				}
+				for (uint32_t i = 0; i < c->value.size(); ++i) {
+					const real_t d = p_pos.distance_to(nodes[c->value[i]]->get_position());
+					if (d <= best_d) {
+						best_d = d;
+						best = c->value[i];
+					}
+				}
+			}
+		}
+	}
+	return best;
+}
+
+bool CassieSketchGraph::_edge_at(const Vector3 &p_pos, real_t p_tol, int &r_eid, int &r_seg) const {
+	real_t best_d = p_tol;
+	bool found = false;
+	for (int x = _cell_of(p_pos.x - p_tol); x <= _cell_of(p_pos.x + p_tol); ++x) {
+		for (int y = _cell_of(p_pos.y - p_tol); y <= _cell_of(p_pos.y + p_tol); ++y) {
+			for (int z = _cell_of(p_pos.z - p_tol); z <= _cell_of(p_pos.z + p_tol); ++z) {
+				HashMap<int64_t, LocalVector<SegRef>>::ConstIterator c = seg_cells.find(_cell_key(x, y, z));
+				if (!c) {
+					continue;
+				}
+				for (uint32_t i = 0; i < c->value.size(); ++i) {
+					const SegRef &r = c->value[i];
+					HashMap<int, Ref<CassieSketchGraphEdge>>::ConstIterator e = edges.find(r.eid);
+					if (!e) {
+						continue;
+					}
+					const PackedVector3Array &pts = e->value->get_points_ref();
+					const Vector3 ab = pts[r.seg + 1] - pts[r.seg];
+					const real_t len2 = ab.length_squared();
+					const real_t u = len2 > 0 ? CLAMP((p_pos - pts[r.seg]).dot(ab) / len2, real_t(0), real_t(1)) : real_t(0);
+					const real_t d = (pts[r.seg] + ab * u).distance_to(p_pos);
+					if (d <= best_d) {
+						best_d = d;
+						r_eid = r.eid;
+						r_seg = r.seg;
+						found = true;
+					}
+				}
+			}
+		}
+	}
+	return found;
+}
+
+int CassieSketchGraph::_split_edge_at(int p_eid, int p_seg, const Vector3 &p_pos) {
+	const Ref<CassieSketchGraphEdge> edge = edges[p_eid];
+	const PackedVector3Array pts = edge->get_points();
+	const int a = edge->get_node_a_id();
+	const int b = edge->get_node_b_id();
+	const bool boundary = edge->get_boundary();
+	const int source = edge->get_source_polyline_idx();
+	PackedVector3Array first;
+	for (int k = 0; k <= p_seg; ++k) {
+		first.push_back(pts[k]);
+	}
+	first.push_back(p_pos);
+	PackedVector3Array second;
+	second.push_back(p_pos);
+	for (int k = p_seg + 1; k < pts.size(); ++k) {
+		second.push_back(pts[k]);
+	}
+	const int n = create_node(p_pos);
+	_remove_edge(p_eid);
+	const int e1 = add_edge_between(first, a, n, boundary, source);
+	const int e2 = add_edge_between(second, n, b, boundary, source);
+	if (incremental_cycles && e1 >= 0 && e2 >= 0) {
+		_cycles_repair_split(p_eid, e1, e2, a);
+	}
+	return n;
+}
+
+int CassieSketchGraph::_locate(const Vector3 &p_pos, real_t p_tol) {
+	const int node = _node_at(p_pos, p_tol);
+	if (node >= 0) {
+		return node;
+	}
+	int eid = -1;
+	int seg = -1;
+	if (_edge_at(p_pos, p_tol, eid, seg)) {
+		return _split_edge_at(eid, seg, p_pos);
+	}
+	return -1;
+}
+
+int CassieSketchGraph::add_curve_at_junctions(const PackedVector3Array &p_points,
+		const PackedVector3Array &p_junctions, real_t p_tol, real_t p_end_tol, bool p_boundary,
+		bool p_split_closed, int &r_unmatched, int p_source) {
+	const int n = p_points.size();
+	if (n < 2) {
+		return 0;
+	}
+	LocalVector<real_t> cum;
+	_cumulative_lengths(p_points, cum);
+	const real_t length = cum[n - 1];
+	struct Event {
+		real_t t;
+		int node;
+		Vector3 pos;
+	};
+	LocalVector<Event> events;
+	for (int j = 0; j < p_junctions.size(); ++j) {
+		const int node = _locate(p_junctions[j], p_tol);
+		if (node < 0) {
+			r_unmatched++;
+			continue;
+		}
+		real_t t = 0;
+		_project_onto(p_points, cum, p_junctions[j], t);
+		events.push_back({ t, node, p_junctions[j] });
+	}
+	for (uint32_t a = 1; a < events.size(); ++a) {
+		for (uint32_t b = a; b > 0 && events[b].t < events[b - 1].t; --b) {
+			const Event tmp = events[b];
+			events[b] = events[b - 1];
+			events[b - 1] = tmp;
+		}
+	}
+	const bool closed = p_points[0].distance_to(p_points[n - 1]) <= p_tol;
+	int start = (!events.is_empty() && events[0].t <= p_end_tol) ? events[0].node : _locate(p_points[0], p_tol);
+	if (start < 0) {
+		start = create_node(p_points[0]);
+	}
+	int end = start;
+	if (!closed) {
+		end = (!events.is_empty() && events[events.size() - 1].t >= length - p_end_tol) ? events[events.size() - 1].node
+																					: _locate(p_points[n - 1], p_tol);
+		if (end < 0) {
+			end = create_node(p_points[n - 1]);
+		}
+	}
+	LocalVector<Event> cuts;
+	for (uint32_t i = 0; i < events.size(); ++i) {
+		const Event &e = events[i];
+		const int prev = cuts.is_empty() ? start : cuts[cuts.size() - 1].node;
+		if (e.t <= p_end_tol || e.t >= length - p_end_tol || e.node == prev) {
+			continue;
+		}
+		cuts.push_back(e);
+	}
+	if (closed && cuts.is_empty() && p_split_closed) {
+		const int mid = n / 2;
+		cuts.push_back({ cum[mid], create_node(p_points[mid]), p_points[mid] });
+	}
+	int added = 0;
+	LocalVector<int> new_edges;
+	int from = start;
+	PackedVector3Array piece;
+	piece.push_back(nodes[start]->get_position());
+	int k = 1;
+	for (uint32_t c = 0; c <= cuts.size(); ++c) {
+		const bool last = c == cuts.size();
+		const real_t t_cut = last ? length : cuts[c].t;
+		while (k < n - 1 && cum[k] < t_cut) {
+			piece.push_back(p_points[k]);
+			k++;
+		}
+		const int to = last ? end : cuts[c].node;
+		piece.push_back(last ? nodes[end]->get_position() : cuts[c].pos);
+		const int eid = piece.size() >= 2 ? add_edge_between(piece, from, to, p_boundary, p_source) : -1;
+		if (eid >= 0) {
+			new_edges.push_back(eid);
+			added++;
+		}
+		piece = PackedVector3Array();
+		piece.push_back(last ? Vector3() : cuts[c].pos);
+		while (k < n - 1 && cum[k] <= t_cut) {
+			k++;
+		}
+		from = to;
+	}
+	if (incremental_cycles) {
+		_cycles_after_curve(new_edges);
+	}
+	return added;
 }
 
 void CassieSketchGraph::_remove_edge(int p_edge_id) {
@@ -1054,6 +1326,12 @@ static int _next_edge_port(const HashMap<int, Ref<CassieSketchGraphEdge>> &p_edg
 // than 60°. Two edges closing on each other is a cycle (a lens).
 Array CassieSketchGraph::find_cycles() const {
 	Array out;
+	if (incremental_cycles) {
+		for (const KeyValue<String, PackedInt32Array> &kv : live_cycles) {
+			out.push_back(kv.value);
+		}
+		return out;
+	}
 	const int edge_count = edges.size();
 	if (edge_count < 2) {
 		return out;
@@ -1310,4 +1588,217 @@ void CassieSketchGraph::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sample_cycle_boundary",
 								 "cycle_edge_ids", "target_edge_length"),
 			&CassieSketchGraph::sample_cycle_boundary);
+}
+
+static String _sig_of(const PackedInt32Array &p_cycle) {
+	LocalVector<int> ids;
+	for (int i = 0; i < p_cycle.size(); ++i) {
+		ids.push_back(p_cycle[i]);
+	}
+	SortArray<int> sorter;
+	sorter.sort(ids.ptr(), ids.size());
+	String key;
+	for (uint32_t i = 0; i < ids.size(); ++i) {
+		key += itos(ids[i]) + ",";
+	}
+	return key;
+}
+
+bool CassieSketchGraph::_cycle_add(const PackedInt32Array &p_edges) {
+	const String sig = _sig_of(p_edges);
+	if (live_cycles.has(sig)) {
+		return false;
+	}
+	live_cycles.insert(sig, p_edges);
+	for (int i = 0; i < p_edges.size(); ++i) {
+		edge_cycle_count[p_edges[i]] += 1;
+	}
+	return true;
+}
+
+void CassieSketchGraph::_cycle_remove(const String &p_sig) {
+	HashMap<String, PackedInt32Array>::Iterator it = live_cycles.find(p_sig);
+	if (!it) {
+		return;
+	}
+	for (int i = 0; i < it->value.size(); ++i) {
+		edge_cycle_count[it->value[i]] -= 1;
+	}
+	live_cycles.remove(it);
+}
+
+void CassieSketchGraph::_cycles_repair_split(int p_old, int p_first, int p_second, int p_node_a) {
+	LocalVector<String> hit;
+	for (const KeyValue<String, PackedInt32Array> &kv : live_cycles) {
+		if (kv.value.has(p_old)) {
+			hit.push_back(kv.key);
+		}
+	}
+	for (uint32_t h = 0; h < hit.size(); ++h) {
+		const PackedInt32Array old = live_cycles[hit[h]];
+		const int n = old.size();
+		const int at = old.find(p_old);
+		const int prev = old[(at + n - 1) % n];
+		// The half touching the previous edge of the cycle comes first.
+		bool first_leads = true;
+		if (n > 1 && edges.has(prev)) {
+			const Ref<CassieSketchGraphEdge> pe = edges[prev];
+			first_leads = pe->get_node_a_id() == p_node_a || pe->get_node_b_id() == p_node_a;
+		}
+		PackedInt32Array repaired;
+		for (int k = 0; k < n; ++k) {
+			if (k == at) {
+				repaired.push_back(first_leads ? p_first : p_second);
+				repaired.push_back(first_leads ? p_second : p_first);
+			} else {
+				repaired.push_back(old[k]);
+			}
+		}
+		_cycle_remove(hit[h]);
+		_cycle_add(repaired);
+	}
+}
+
+int CassieSketchGraph::_trivial_reach(int p_node, int p_from_edge) const {
+	int node = p_node;
+	int edge = p_from_edge;
+	for (int step = 0; step < 5; ++step) {
+		const PackedInt32Array ring = nodes[node]->get_edge_ids();
+		if (ring.size() != 2) {
+			break;
+		}
+		const int other = ring[0] == edge ? ring[1] : ring[0];
+		if (!edges.has(other)) {
+			break;
+		}
+		node = edges[other]->get_opposite(node);
+		edge = other;
+	}
+	return node;
+}
+
+void CassieSketchGraph::_cycles_after_curve(const LocalVector<int> &p_new_edges) {
+	LocalVector<int> seeds;
+	LocalVector<String> cut;
+	for (const KeyValue<String, PackedInt32Array> &kv : live_cycles) {
+		HashSet<int> on_cycle;
+		for (int i = 0; i < kv.value.size(); ++i) {
+			const Ref<CassieSketchGraphEdge> e = edges[kv.value[i]];
+			on_cycle.insert(e->get_node_a_id());
+			on_cycle.insert(e->get_node_b_id());
+		}
+		for (uint32_t k = 0; k < p_new_edges.size(); ++k) {
+			if (kv.value.has(p_new_edges[k])) {
+				continue;
+			}
+			const Ref<CassieSketchGraphEdge> ne = edges[p_new_edges[k]];
+			const int a = _trivial_reach(ne->get_node_a_id(), p_new_edges[k]);
+			const int b = _trivial_reach(ne->get_node_b_id(), p_new_edges[k]);
+			if (a != b && on_cycle.has(a) && on_cycle.has(b)) {
+				cut.push_back(kv.key);
+				seeds.push_back(kv.value[0]);
+				break;
+			}
+		}
+	}
+	for (uint32_t i = 0; i < cut.size(); ++i) {
+		_cycle_remove(cut[i]);
+	}
+	for (uint32_t k = 0; k < p_new_edges.size(); ++k) {
+		seeds.push_back(p_new_edges[k]);
+	}
+	for (uint32_t k = 0; k < p_new_edges.size(); ++k) {
+		const Ref<CassieSketchGraphEdge> ne = edges[p_new_edges[k]];
+		const int ends[2] = { ne->get_node_a_id(), ne->get_node_b_id() };
+		for (int e = 0; e < 2; ++e) {
+			const PackedInt32Array ring = nodes[ends[e]]->get_edge_ids();
+			for (int r = 0; r < ring.size(); ++r) {
+				seeds.push_back(ring[r]);
+			}
+		}
+	}
+	for (uint32_t k = 0; k < seeds.size(); ++k) {
+		if (!edges.has(seeds[k])) {
+			continue;
+		}
+		const Ref<CassieSketchGraphEdge> se = edges[seeds[k]];
+		const int starts[2] = { se->get_node_a_id(), se->get_node_b_id() };
+		for (int side = 0; side < 2; ++side) {
+			LocalVector<int> path;
+			if (_walk_cycle(seeds[k], starts[side], path)) {
+				PackedInt32Array cycle;
+				for (uint32_t i = 0; i < path.size(); ++i) {
+					cycle.push_back(path[i]);
+				}
+				_cycle_add(cycle);
+			}
+		}
+	}
+}
+
+bool CassieSketchGraph::_walk_cycle(int p_seed, int p_start_nid, LocalVector<int> &r_path) const {
+	HashMap<int, int>::ConstIterator sc = edge_cycle_count.find(p_seed);
+	if (sc && sc->value >= 2) {
+		return false;
+	}
+	HashMap<int, WalkNodeMeta> meta;
+	auto meta_of = [&](int p_nid) -> const WalkNodeMeta & {
+		HashMap<int, WalkNodeMeta>::Iterator it = meta.find(p_nid);
+		if (it) {
+			return it->value;
+		}
+		WalkNodeMeta m;
+		const PackedInt32Array eids = nodes[p_nid]->get_edge_ids();
+		LocalVector<Vector3> tangents;
+		for (int i = 0; i < eids.size(); ++i) {
+			if (!edges.has(eids[i])) {
+				continue;
+			}
+			m.ring.push_back(eids[i]);
+			tangents.push_back(edges[eids[i]]->get_tangent_away_from(p_nid));
+		}
+		if (m.ring.size() >= 2) {
+			const real_t residual = _fit_plane(tangents, m.normal);
+			m.is_sharp = residual > real_t(0.5);
+			if (m.normal.length() > real_t(0.5)) {
+				_sort_ring_ccw(edges, p_nid, m.normal, m.ring);
+			}
+		}
+		return meta.insert(p_nid, m)->value;
+	};
+	HashSet<int> path_set;
+	int current_eid = p_seed;
+	int current_nid = p_start_nid;
+	Vector3 transported = meta_of(p_start_nid).normal;
+	bool reversed = false;
+	const int max_steps = edges.size() + 2;
+	for (int step = 0; step < max_steps; ++step) {
+		r_path.push_back(current_eid);
+		path_set.insert(current_eid);
+		const Ref<CassieSketchGraphEdge> cur_edge = edges[current_eid];
+		const int next_nid = cur_edge->get_opposite(current_nid);
+		const WalkNodeMeta &next_meta = meta_of(next_nid);
+		transported = cur_edge->parallel_transport(transported, current_nid);
+		reversed = transported.dot(next_meta.normal) < real_t(0.5);
+		const int next_eid = _next_edge_port(edges, next_meta, next_nid, current_eid, transported, reversed);
+		if (next_eid < 0) {
+			return false;
+		}
+		if (next_eid == p_seed && next_nid == p_start_nid) {
+			return r_path.size() >= 2;
+		}
+		if (path_set.has(next_eid)) {
+			return false;
+		}
+		HashMap<int, int>::ConstIterator nc = edge_cycle_count.find(next_eid);
+		if (nc && nc->value >= 2) {
+			return false;
+		}
+		const Vector3 t_in = -cur_edge->get_tangent_away_from(next_nid);
+		const Vector3 t_next = edges[next_eid]->get_tangent_away_from(next_nid);
+		transported = _rotate_between(t_in, t_next, transported);
+		current_eid = next_eid;
+		current_nid = next_nid;
+	}
+	return false;
 }

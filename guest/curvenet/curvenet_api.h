@@ -45,6 +45,10 @@ std::string pen_point(int id, float x, float y, float z, float pressure);
 // boundary strokes.
 std::string pen_end(int id);
 std::string pen_end_with_crossings(int id, const std::vector<float> &crossings_xyz);
+std::string pen_end_recorded(int id, const std::vector<float> &junctions_xyz, int source);
+std::vector<int32_t> cycle_sources();
+int find_cycles_count();
+int mesh_deferred(int max_count);
 
 int patch_count();
 std::vector<float> patch_vertices(int i);
