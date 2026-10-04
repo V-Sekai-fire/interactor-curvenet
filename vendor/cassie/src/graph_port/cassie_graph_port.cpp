@@ -25,6 +25,7 @@
 /**************************************************************************/
 
 #include "cassie_graph_port.h"
+#include "df32.h"
 
 #include <algorithm>
 #include <array>
@@ -38,6 +39,23 @@
 #include <vector>
 
 namespace cassie_graph_port {
+
+// One-line switch: define CASSIE_GRAPH_F32 to run the graph in plain float, as Unity did.
+#ifdef CASSIE_GRAPH_F32
+typedef float real;
+real Sqrt(real x) { return (float)std::sqrt((double)x); }
+real Fabs(real x) { return std::fabs(x); }
+real Floor(real x) { return std::floor(x); }
+#else
+typedef df32 real;
+real Sqrt(real x) { return sqrt(x); }
+real Fabs(real x) { return fabs(x); }
+real Floor(real x) { return floor(x); }
+#endif
+real Max(real a, real b) { return a < b ? b : a; }
+real Min(real a, real b) { return b < a ? b : a; }
+real Fmod(real a, real b) { return real(std::fmod(to_double(a), to_double(b))); }
+
 
 namespace {
 
@@ -55,18 +73,19 @@ T *nn(T *p) {
 	return p;
 }
 
-const float kEpsilon = std::numeric_limits<float>::denorm_min();
-const float kPi = 3.14159274f;
-const float kRad2Deg = 57.29578f;
-const float kDeg2Rad = 0.0174532924f;
+const real kEpsilon = real(std::numeric_limits<float>::denorm_min());
+const real kInf = real(std::numeric_limits<float>::infinity());
+const real kPi = real(3.14159274f);
+const real kRad2Deg = 57.29578f;
+const real kDeg2Rad = 0.0174532924f;
 
 struct V3 {
-	float x = 0.0f;
-	float y = 0.0f;
-	float z = 0.0f;
+	real x = 0.0f;
+	real y = 0.0f;
+	real z = 0.0f;
 };
 
-V3 v3(float x, float y, float z) {
+V3 v3(real x, real y, real z) {
 	V3 r;
 	r.x = x;
 	r.y = y;
@@ -76,60 +95,60 @@ V3 v3(float x, float y, float z) {
 V3 operator+(V3 a, V3 b) { return v3(a.x + b.x, a.y + b.y, a.z + b.z); }
 V3 operator-(V3 a, V3 b) { return v3(a.x - b.x, a.y - b.y, a.z - b.z); }
 V3 operator-(V3 a) { return v3(-a.x, -a.y, -a.z); }
-V3 operator*(V3 a, float s) { return v3(a.x * s, a.y * s, a.z * s); }
-V3 operator*(float s, V3 a) { return v3(a.x * s, a.y * s, a.z * s); }
-V3 operator/(V3 a, float s) { return v3(a.x / s, a.y / s, a.z / s); }
-float Dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+V3 operator*(V3 a, real s) { return v3(a.x * s, a.y * s, a.z * s); }
+V3 operator*(real s, V3 a) { return v3(a.x * s, a.y * s, a.z * s); }
+V3 operator/(V3 a, real s) { return v3(a.x / s, a.y / s, a.z / s); }
+real Dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 V3 Cross(V3 a, V3 b) { return v3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x); }
-float Mag(V3 a) { return (float)std::sqrt((double)(a.x * a.x + a.y * a.y + a.z * a.z)); }
+real Mag(V3 a) { return Sqrt(a.x * a.x + a.y * a.y + a.z * a.z); }
 V3 Normalized(V3 a) {
-	float m = Mag(a);
+	real m = Mag(a);
 	if (m > 1e-5f) {
 		return a / m;
 	}
 	return V3();
 }
-float Distance(V3 a, V3 b) { return Mag(a - b); }
-float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
-float Acos(float f) { return (float)std::acos((double)f); }
-bool Approximately(float a, float b) {
-	return std::fabs(b - a) < std::max(1e-6f * std::max(std::fabs(a), std::fabs(b)), kEpsilon * 8.0f);
+real Distance(V3 a, V3 b) { return Mag(a - b); }
+real Clamp(real v, real lo, real hi) { return v < lo ? lo : (v > hi ? hi : v); }
+real Acos(real f) { return real(std::acos(to_double(f))); }
+bool Approximately(real a, real b) {
+	return Fabs(b - a) < Max(1e-6f * Max(Fabs(a), Fabs(b)), kEpsilon * 8.0f);
 }
 
 // Quaternion.AngleAxis(deg, axis) * v, with Unity's quaternion-vector product.
-V3 RotateAngleAxis(float p_degrees, V3 p_axis, V3 v) {
-	float mag = Mag(p_axis);
-	float qx = 0.0f;
-	float qy = 0.0f;
-	float qz = 0.0f;
-	float qw = 1.0f;
+V3 RotateAngleAxis(real p_degrees, V3 p_axis, V3 v) {
+	real mag = Mag(p_axis);
+	real qx = 0.0f;
+	real qy = 0.0f;
+	real qz = 0.0f;
+	real qw = 1.0f;
 	if (mag > 1e-6f) {
-		float half = (p_degrees * kDeg2Rad) * 0.5f;
-		qw = (float)std::cos((double)half);
-		float s = (float)std::sin((double)half) / mag;
+		real half = (p_degrees * kDeg2Rad) * 0.5f;
+		qw = real(std::cos(to_double(half)));
+		real s = real(std::sin(to_double(half))) / mag;
 		qx = s * p_axis.x;
 		qy = s * p_axis.y;
 		qz = s * p_axis.z;
 	}
-	float n1 = qx * 2.0f;
-	float n2 = qy * 2.0f;
-	float n3 = qz * 2.0f;
-	float n4 = qx * n1;
-	float n5 = qy * n2;
-	float n6 = qz * n3;
-	float n7 = qx * n2;
-	float n8 = qx * n3;
-	float n9 = qy * n3;
-	float n10 = qw * n1;
-	float n11 = qw * n2;
-	float n12 = qw * n3;
+	real n1 = qx * 2.0f;
+	real n2 = qy * 2.0f;
+	real n3 = qz * 2.0f;
+	real n4 = qx * n1;
+	real n5 = qy * n2;
+	real n6 = qz * n3;
+	real n7 = qx * n2;
+	real n8 = qx * n3;
+	real n9 = qy * n3;
+	real n10 = qw * n1;
+	real n11 = qw * n2;
+	real n12 = qw * n3;
 	return v3((1.0f - (n5 + n6)) * v.x + (n7 - n12) * v.y + (n8 + n11) * v.z,
 			(n7 + n12) * v.x + (1.0f - (n4 + n6)) * v.y + (n9 - n10) * v.z,
 			(n8 - n11) * v.x + (n9 + n10) * v.y + (1.0f - (n4 + n5)) * v.z);
 }
 
 struct PointOnCurve {
-	float t = 0.0f;
+	real t = 0.0f;
 	V3 position;
 };
 
@@ -141,9 +160,9 @@ struct CubicBezier {
 		c2 = 3.0f * (P0 - 2.0f * P1 + P2);
 		c3 = -P0 + 3.0f * P1 - 3.0f * P2 + P3;
 	}
-	V3 Calculate(float t) const {
-		float t2 = t * t;
-		float t3 = t2 * t;
+	V3 Calculate(real t) const {
+		real t2 = t * t;
+		real t3 = t2 * t;
 		return c0 + c1 * t + c2 * t2 + c3 * t3;
 	}
 };
@@ -170,36 +189,36 @@ public:
 		}
 	}
 
-	void Convert(float t, int &r_idx, float &r_u) const {
+	void Convert(real t, int &r_idx, real &r_u) const {
 		int n = (int)beziers.size();
 		if (Approximately(t, 1.0f)) {
 			r_idx = n - 1;
 			r_u = 1.0f;
 			return;
 		}
-		int idx = (int)std::floor(t * (float)n);
-		r_u = t * (float)n - (float)idx;
+		int idx = (int)to_double(Floor(t * real(n)));
+		r_u = t * real(n) - real(idx);
 		if (idx < 0 || idx >= n) {
 			throw CsException("IndexOutOfRangeException");
 		}
 		r_idx = idx;
 	}
 
-	V3 GetPoint(float t) const {
+	V3 GetPoint(real t) const {
 		if (is_line) {
-			float c = Clamp(t, 0.0f, 1.0f);
+			real c = Clamp(t, 0.0f, 1.0f);
 			return v3(A.x + (B.x - A.x) * c, A.y + (B.y - A.y) * c, A.z + (B.z - A.z) * c);
 		}
 		int idx = 0;
-		float u = 0.0f;
+		real u = 0.0f;
 		Convert(t, idx, u);
 		return beziers[idx].Calculate(u);
 	}
 
-	V3 GetTangent(float t) const {
-		float delta = 0.001f;
-		float t1 = t - delta;
-		float t2 = t + delta;
+	V3 GetTangent(real t) const {
+		real delta = 0.001f;
+		real t1 = t - delta;
+		real t2 = t + delta;
 		if (t1 < 0.0f) {
 			t1 = 0.0f;
 		}
@@ -211,18 +230,18 @@ public:
 		return Normalized(pt2 - pt1);
 	}
 
-	float GetClosestPointParameter(V3 point, int slices, float start, float end, int iterations) const {
+	real GetClosestPointParameter(V3 point, int slices, real start, real end, int iterations) const {
 		if (iterations <= 0) {
 			return (start + end) / 2.0f;
 		}
-		float step = (end - start) / (float)slices;
+		real step = (end - start) / real(slices);
 		if (step < 10e-6f) {
 			return (start + end) / 2.0f;
 		}
-		float tMin = 0.0f;
-		float t = start;
-		float dMin = std::numeric_limits<float>::infinity();
-		float d = 0.0f;
+		real tMin = 0.0f;
+		real t = start;
+		real dMin = kInf;
+		real d = 0.0f;
 		while (t <= end) {
 			d = Distance(point, GetPoint(t));
 			if (d < dMin) {
@@ -236,7 +255,7 @@ public:
 			tMin = t;
 			dMin = d;
 		}
-		return GetClosestPointParameter(point, slices, std::max(tMin - step, 0.0f), std::min(tMin + step, 1.0f), iterations - 1);
+		return GetClosestPointParameter(point, slices, Max(tMin - step, 0.0f), Min(tMin + step, 1.0f), iterations - 1);
 	}
 
 	PointOnCurve Project(V3 point) const {
@@ -256,42 +275,42 @@ public:
 			return r;
 		}
 		int nSlices = 10 * (int)beziers.size();
-		float tMin = GetClosestPointParameter(point, nSlices, 0.0f, 1.0f, 5);
+		real tMin = GetClosestPointParameter(point, nSlices, 0.0f, 1.0f, 5);
 		return GetPointOnCurve(tMin);
 	}
 
-	PointOnCurve GetPointOnCurve(float t) const {
+	PointOnCurve GetPointOnCurve(real t) const {
 		PointOnCurve r;
 		r.t = t;
 		r.position = GetPoint(t);
 		return r;
 	}
 
-	int GetBezierCountBetween(float from, float to) const {
+	int GetBezierCountBetween(real from, real to) const {
 		int a = 0;
 		int b = 0;
-		float u = 0.0f;
+		real u = 0.0f;
 		Convert(from, a, u);
 		Convert(to, b, u);
 		return std::abs(b - a) + 1;
 	}
 
-	V3 ParallelTransport(V3 v, float from, float to) const {
+	V3 ParallelTransport(V3 v, real from, real to) const {
 		if (is_line) {
 			return v;
 		}
 		int n = 20 * GetBezierCountBetween(from, to);
-		float dt = (to - from) / (float)n;
+		real dt = (to - from) / real(n);
 		V3 prev_tangent = GetTangent(from);
 		V3 v_t = v;
 		for (int i = 1; i <= n; i++) {
-			float t = from + (float)i * dt;
+			real t = from + real(i) * dt;
 			V3 tangent = GetTangent(t);
 			V3 axis = Cross(prev_tangent, tangent);
 			if (Mag(axis) > kEpsilon) {
 				axis = Normalized(axis);
-				float dot = Dot(prev_tangent, tangent);
-				float theta = Acos(Clamp(dot, -1.0f, 1.0f));
+				real dot = Dot(prev_tangent, tangent);
+				real theta = Acos(Clamp(dot, -1.0f, 1.0f));
 				v_t = RotateAngleAxis(theta * kRad2Deg, axis, v_t);
 			}
 			prev_tangent = tangent;
@@ -304,7 +323,7 @@ struct Plane {
 	V3 n, p0;
 	bool valid = false;
 	V3 Mirror(V3 p) const {
-		float a = Dot(n, p - p0);
+		real a = Dot(n, p - p0);
 		return p - 2.0f * a * n;
 	}
 };
@@ -315,8 +334,8 @@ Plane FitPlanePoints(const std::vector<V3> &points) {
 	for (const V3 &p : points) {
 		sum = sum + p;
 	}
-	V3 centroid = sum / (float)points.size();
-	float xx = 0.0f, xy = 0.0f, xz = 0.0f, yy = 0.0f, yz = 0.0f, zz = 0.0f;
+	V3 centroid = sum / real((int)points.size());
+	real xx = 0.0f, xy = 0.0f, xz = 0.0f, yy = 0.0f, yz = 0.0f, zz = 0.0f;
 	for (const V3 &p : points) {
 		V3 r = p - centroid;
 		xx += r.x * r.x;
@@ -326,10 +345,10 @@ Plane FitPlanePoints(const std::vector<V3> &points) {
 		yz += r.y * r.z;
 		zz += r.z * r.z;
 	}
-	float det_x = yy * zz - yz * yz;
-	float det_y = xx * zz - xz * xz;
-	float det_z = xx * yy - xy * xy;
-	float det_max = std::max(det_x, std::max(det_y, det_z));
+	real det_x = yy * zz - yz * yz;
+	real det_y = xx * zz - xz * xz;
+	real det_z = xx * yy - xy * xy;
+	real det_max = Max(det_x, Max(det_y, det_z));
 	if (det_max <= 0.0f) {
 		return result;
 	}
@@ -342,16 +361,16 @@ Plane FitPlanePoints(const std::vector<V3> &points) {
 }
 
 // Utils.FitPlane(point, vectors): max |dot(n, t)| is the sharpness error.
-Plane FitPlaneVectors(V3 point, const std::vector<V3> &vectors, float &r_err) {
-	r_err = std::numeric_limits<float>::infinity();
+Plane FitPlaneVectors(V3 point, const std::vector<V3> &vectors, real &r_err) {
+	r_err = kInf;
 	if (vectors.size() < 2) {
 		return Plane();
 	}
-	float score = 0.0f;
+	real score = 0.0f;
 	std::vector<V3> pts(vectors.size() + 1);
 	for (size_t i = 0; i < vectors.size(); i++) {
 		pts[i] = point + vectors[i];
-		float nonCollinearity = Mag(Cross(vectors[i], vectors[(i + 1) % vectors.size()]));
+		real nonCollinearity = Mag(Cross(vectors[i], vectors[(i + 1) % vectors.size()]));
 		if (nonCollinearity > score) {
 			score = nonCollinearity;
 		}
@@ -364,9 +383,9 @@ Plane FitPlaneVectors(V3 point, const std::vector<V3> &vectors, float &r_err) {
 	if (!P.valid) {
 		throw CsException("NullReferenceException");
 	}
-	float maxError = 0.0f;
+	real maxError = 0.0f;
 	for (const V3 &t : vectors) {
-		float error = std::fabs(Dot(P.n, t));
+		real error = Fabs(Dot(P.n, t));
 		if (error > maxError) {
 			maxError = error;
 		}
@@ -621,23 +640,23 @@ class Segment {
 public:
 	FinalStroke *Stroke;
 	Node *endpoints[2] = { nullptr, nullptr };
-	float params[2] = { 0.0f, 0.0f };
+	real params[2] = { 0.0f, 0.0f };
 	int ID;
 
-	Segment(int p_id, FinalStroke *s, float start, float end, Node *startNode, Node *endNode) :
+	Segment(int p_id, FinalStroke *s, real start, real end, Node *startNode, Node *endNode) :
 			Stroke(s), ID(p_id) {
 		SetStart(start, startNode);
 		SetEnd(end, endNode);
 	}
-	void SetStart(float param, Node *node) { Replace(0, param, node); }
+	void SetStart(real param, Node *node) { Replace(0, param, node); }
 	void SetStart(Node *node) { SetStart(params[0], node); }
-	void SetEnd(float param, Node *node) { Replace(1, param, node); }
+	void SetEnd(real param, Node *node) { Replace(1, param, node); }
 	void SetEnd(Node *node) { SetEnd(params[1], node); }
 	Node *GetStartNode() const { return endpoints[0]; }
 	Node *GetEndNode() const { return endpoints[1]; }
-	float GetStartParam() const { return params[0]; }
-	float GetEndParam() const { return params[1]; }
-	V3 GetPointAt(float u) const;
+	real GetStartParam() const { return params[0]; }
+	real GetEndParam() const { return params[1]; }
+	V3 GetPointAt(real u) const;
 	void Delete() {
 		for (Node *node : endpoints) {
 			nn(node)->RemoveSegment(this);
@@ -646,12 +665,12 @@ public:
 	int WhichEndpoint(const Node *node) const { return node == endpoints[0] ? 0 : 1; }
 	static int Other(int idx) { return (idx + 1) % 2; }
 	Node *GetOpposite(const Node *from) const { return endpoints[Other(WhichEndpoint(from))]; }
-	float GetParam(const Node *from) const { return params[WhichEndpoint(from)]; }
+	real GetParam(const Node *from) const { return params[WhichEndpoint(from)]; }
 	bool IsInReverse(const Node *from) const { return WhichEndpoint(from) == 1; }
 	V3 GetTangentAt(const Node *endpoint) const;
 	V3 ProjectInPlane(const Node *n, V3 normal) const;
 	V3 Transport(V3 v, const Node *to) const;
-	void Replace(int idx, float param, Node *node) {
+	void Replace(int idx, real param, Node *node) {
 		params[idx] = param;
 		if (node != nullptr) {
 			if (endpoints[idx] != nullptr) {
@@ -802,7 +821,7 @@ public:
 		_nodes[id] = n;
 		return n;
 	}
-	Segment *NewSegment(FinalStroke *s, float start, float end, Node *startNode, Node *endNode, bool onNewStroke) {
+	Segment *NewSegment(FinalStroke *s, real start, real end, Node *startNode, Node *endNode, bool onNewStroke) {
 		int id = _segmentID++;
 		segment_pool.push_back(std::unique_ptr<Segment>(new Segment(id, s, start, end, startNode, endNode)));
 		Segment *seg = segment_pool.back().get();
@@ -845,7 +864,7 @@ public:
 			UpdateNeighborsCycles(s, n);
 		}
 	}
-	void SetEnd(Segment *s, float param, Node *n, bool updateNeighbors) {
+	void SetEnd(Segment *s, real param, Node *n, bool updateNeighbors) {
 		s->SetEnd(param, n);
 		if (updateNeighbors) {
 			UpdateNeighborsCycles(s, n);
@@ -919,7 +938,7 @@ public:
 	}
 	Segment *FindClosestSegment(V3 pos, bool lookAtNonManifold) {
 		Segment *closest = nullptr;
-		float minDist = 10.0f;
+		real minDist = 10.0f;
 		for (Segment *s : _segments.Values()) {
 			if (!lookAtNonManifold) {
 				std::map<int, SegmentCycles>::iterator it = _cyclesBySegment.find(s->ID);
@@ -930,7 +949,7 @@ public:
 			if (s->GetStartNode()->IncidentCount() < 2 || s->GetEndNode()->IncidentCount() < 2) {
 				continue;
 			}
-			float avg = (Distance(s->GetStartNode()->Position, pos) + Distance(s->GetEndNode()->Position, pos) + Distance(s->GetPointAt(0.5f), pos)) / 3.0f;
+			real avg = (Distance(s->GetStartNode()->Position, pos) + Distance(s->GetEndNode()->Position, pos) + Distance(s->GetPointAt(0.5f), pos)) / 3.0f;
 			if (avg < minDist) {
 				closest = s;
 				minDist = avg;
@@ -940,7 +959,7 @@ public:
 	}
 	Segment *FindClosestAmongNeighbors(V3 pos, Node *node, Segment *current, bool lookAtNonManifold) {
 		Segment *closest = nullptr;
-		float minDistNext = 10.0f;
+		real minDistNext = 10.0f;
 		std::list<Segment *> copy = node->Neighbors;
 		for (Segment *s : copy) {
 			if (s == current) {
@@ -952,10 +971,10 @@ public:
 			if (s->GetOpposite(node)->IncidentCount() < 2) {
 				continue;
 			}
-			float dt = 1.0f / 5.0f;
-			float dist = std::numeric_limits<float>::infinity();
+			real dt = 1.0f / 5.0f;
+			real dist = kInf;
 			for (int i = 1; i <= 5; i++) {
-				float d = Distance(s->GetPointAt((float)i * dt), pos);
+				real d = Distance(s->GetPointAt(real(i) * dt), pos);
 				if (d < dist) {
 					dist = d;
 				}
@@ -1092,7 +1111,7 @@ public:
 			_graph->RemoveSegment(s);
 		}
 	}
-	std::list<Segment *>::iterator GetSegmentInListContaining(float param) {
+	std::list<Segment *>::iterator GetSegmentInListContaining(real param) {
 		if (segments.empty()) {
 			throw CsException("NullReferenceException");
 		}
@@ -1102,12 +1121,12 @@ public:
 		}
 		return it;
 	}
-	PointOnCurve GetConstraint(V3 position, float snap) {
+	PointOnCurve GetConstraint(V3 position, real snap) {
 		PointOnCurve onCurve = curve->Project(position);
 		if (!segments.empty()) {
 			Segment *s = *GetSegmentInListContaining(onCurve.t);
 			Node *closest = nullptr;
-			float param = 0.0f;
+			real param = 0.0f;
 			if (Distance(s->endpoints[0]->Position, onCurve.position) < Distance(s->endpoints[1]->Position, onCurve.position)) {
 				closest = s->endpoints[0];
 				param = s->params[0];
@@ -1126,7 +1145,7 @@ public:
 		Node *r = nn(segment->GetEndNode());
 		return Distance(l->Position, position) < Distance(r->Position, position) ? l : r;
 	}
-	Node *AddIntersectionOldStroke(PointOnCurve point, float threshold) {
+	Node *AddIntersectionOldStroke(PointOnCurve point, real threshold) {
 		std::list<Segment *>::iterator seg = GetSegmentInListContaining(point.t);
 		Node *newNode = _graph->NewNode(point.position);
 		Node *closest = GetClosest(*seg, point.position);
@@ -1137,7 +1156,7 @@ public:
 		AddNode(newNode, seg, point, false);
 		return newNode;
 	}
-	void AddIntersectionNewStroke(Node *node, PointOnCurve point, float threshold) {
+	void AddIntersectionNewStroke(Node *node, PointOnCurve point, real threshold) {
 		std::list<Segment *>::iterator seg = GetSegmentInListContaining(point.t);
 		Node *closest = GetClosest(*seg, point.position);
 		if (Distance(closest->Position, point.position) < threshold) {
@@ -1184,14 +1203,14 @@ public:
 	}
 };
 
-V3 Segment::GetPointAt(float u) const {
-	float t = params[0] + (params[1] - params[0]) * Clamp(u, 0.0f, 1.0f);
+V3 Segment::GetPointAt(real u) const {
+	real t = params[0] + (params[1] - params[0]) * Clamp(u, 0.0f, 1.0f);
 	return Stroke->curve->GetPoint(t);
 }
 V3 Segment::GetTangentAt(const Node *endpoint) const {
 	int end = WhichEndpoint(endpoint);
-	float u = params[end];
-	float orientation = end == 0 ? 1.0f : -1.0f;
+	real u = params[end];
+	real orientation = end == 0 ? 1.0f : -1.0f;
 	return orientation * Stroke->curve->GetTangent(u);
 }
 V3 Segment::ProjectInPlane(const Node *n, V3 normal) const {
@@ -1245,7 +1264,7 @@ Segment *Node::GetPrevious(Segment *s) {
 }
 Segment *Node::GetInPlane(Segment *s, V3 N, bool next) {
 	Segment *nextSegment = nullptr;
-	float projMax = 0.0f;
+	real projMax = 0.0f;
 	Segment *bestInPlane = nullptr;
 	for (Segment *other : Neighbors) {
 		if (other == s) {
@@ -1262,8 +1281,8 @@ Segment *Node::GetInPlane(Segment *s, V3 N, bool next) {
 			continue;
 		}
 		tangent_s = Normalized(tangent_s);
-		float y_s = Dot(tangent_s, y0);
-		float x_s = Dot(tangent_s, x0);
+		real y_s = Dot(tangent_s, y0);
+		real x_s = Dot(tangent_s, x0);
 		if (nextSegment == nullptr) {
 			nextSegment = other;
 			continue;
@@ -1304,13 +1323,13 @@ void Node::UpdateNormal() {
 	std::vector<V3> tangents = GetNeighbors();
 	V3 newNormal;
 	if (tangents.size() > 2 || Mag(Cross(tangents[0], tangents[1])) > 0.1f) {
-		float err = 0.0f;
+		real err = 0.0f;
 		Plane bestPlane = FitPlaneVectors(Position, tangents, err);
 		if (!bestPlane.valid) {
 			std::vector<V3> pseudo;
 			for (Segment *s : Neighbors) {
 				Node *opp = s->GetOpposite(this);
-				V3 oppositeEndpoint = opp != nullptr ? opp->Position : s->GetPointAt(std::fmod(s->GetParam(this) + 0.5f, 1.0f));
+				V3 oppositeEndpoint = opp != nullptr ? opp->Position : s->GetPointAt(Fmod(s->GetParam(this) + 0.5f, 1.0f));
 				pseudo.push_back(Normalized(oppositeEndpoint - Position));
 			}
 			bestPlane = FitPlaneVectors(Position, pseudo, err);
@@ -1365,18 +1384,18 @@ void Node::SortSegments() {
 		V3 x0 = ProjectOnPlane((*neighbor)->GetTangentAt(this));
 		V3 y0 = Cross(x0, Normal);
 		V3 tangent_s = ProjectOnPlane(s->GetTangentAt(this));
-		float y_s = Dot(tangent_s, y0);
-		float x_s = Dot(tangent_s, x0);
+		real y_s = Dot(tangent_s, y0);
+		real x_s = Dot(tangent_s, x0);
 		bool isAfterCurrent = true;
 		while (std::next(neighbor) != sorted.end() && isAfterCurrent) {
 			++neighbor;
 			V3 tangent_neighbor = ProjectOnPlane((*neighbor)->GetTangentAt(this));
-			float x_c = x_s;
-			float y_c = y_s;
+			real x_c = x_s;
+			real y_c = y_s;
 			if (Dot(tangent_neighbor, tangent_s) > 0.99f) {
 				tangent_neighbor = Normalized(nn((*neighbor)->GetOpposite(this))->Position - Position);
 				Node *opp = s->GetOpposite(this);
-				V3 s_opp = opp != nullptr ? opp->Position : s->GetPointAt(std::fmod(s->GetParam(this) + 0.5f, 1.0f));
+				V3 s_opp = opp != nullptr ? opp->Position : s->GetPointAt(Fmod(s->GetParam(this) + 0.5f, 1.0f));
 				V3 t_corr = Normalized(s_opp - Position);
 				x_c = Dot(t_corr, x0);
 				y_c = Dot(t_corr, y0);
@@ -1416,8 +1435,8 @@ V3 TransportAcrossNode(const Node *node, const Segment *prevSegment, const Segme
 	V3 axis = Cross(prev_tangent, tangent);
 	if (Mag(axis) > kEpsilon) {
 		axis = Normalized(axis);
-		float dot = Dot(prev_tangent, tangent);
-		float theta = Acos(Clamp(dot, -1.0f, 1.0f));
+		real dot = Dot(prev_tangent, tangent);
+		real theta = Acos(Clamp(dot, -1.0f, 1.0f));
 		return RotateAngleAxis(theta * kRad2Deg, axis, normal);
 	}
 	return normal;
@@ -1425,17 +1444,17 @@ V3 TransportAcrossNode(const Node *node, const Segment *prevSegment, const Segme
 
 void ShouldReverse(bool &reversed, V3 currentNormal, Node *nextNode, Segment *segment) {
 	V3 transported = segment->Transport(currentNormal, nextNode);
-	float endpointsAngle = Dot(transported, nextNode->Normal);
-	if (std::fabs(endpointsAngle) < 0.5f) {
+	real endpointsAngle = Dot(transported, nextNode->Normal);
+	if (Fabs(endpointsAngle) < 0.5f) {
 		Segment *nextAtNode = nn(nextNode->GetNext(segment));
 		Segment *prevAtNode = nn(nextNode->GetPrevious(segment));
 		V3 projNext = nextAtNode->ProjectInPlane(nextNode, transported);
 		V3 projPrev = prevAtNode->ProjectInPlane(nextNode, transported);
 		V3 x0 = segment->ProjectInPlane(nextNode, transported);
 		V3 y0 = Cross(x0, transported);
-		float twoPi = 2.0f * kPi;
-		float thetaNext = std::fmod((float)std::atan2((double)Dot(projNext, y0), (double)Dot(projNext, x0)) + twoPi, twoPi);
-		float thetaPrev = std::fmod((float)std::atan2((double)Dot(projPrev, y0), (double)Dot(projPrev, x0)) + twoPi, twoPi);
+		real twoPi = 2.0f * kPi;
+		real thetaNext = Fmod(real(std::atan2(to_double(Dot(projNext, y0)), to_double(Dot(projNext, x0)))) + twoPi, twoPi);
+		real thetaPrev = Fmod(real(std::atan2(to_double(Dot(projPrev, y0)), to_double(Dot(projPrev, x0)))) + twoPi, twoPi);
 		if (thetaNext > thetaPrev) {
 			reversed = !reversed;
 		}
@@ -1633,7 +1652,7 @@ struct Replay::Impl {
 	ReplayStats stats;
 
 	V3 Local(const WorldPoint &p) const {
-		return v3((float)(p.x - origin.x), (float)(p.y - origin.y), (float)(p.z - origin.z));
+		return v3(real(p.x - origin.x), real(p.y - origin.y), real(p.z - origin.z));
 	}
 	FinalStroke *NewStroke(int id) {
 		pool.push_back(std::unique_ptr<FinalStroke>(new FinalStroke(&graph)));
@@ -1694,15 +1713,15 @@ struct Replay::Impl {
 				std::array<double, 3> r;
 				for (int k = 0; k < 3; k++) {
 					if (c.is_line) {
-						double a = k == 0 ? c.A.x : (k == 1 ? c.A.y : c.A.z);
-						double e = k == 0 ? c.B.x : (k == 1 ? c.B.y : c.B.z);
+						double a = to_double(k == 0 ? c.A.x : (k == 1 ? c.A.y : c.A.z));
+						double e = to_double(k == 0 ? c.B.x : (k == 1 ? c.B.y : c.B.z));
 						r[k] = w * a + u * e;
 					} else {
 						const V3 *P = &c.ctrl[3 * b];
-						double p0 = k == 0 ? P[0].x : (k == 1 ? P[0].y : P[0].z);
-						double p1 = k == 0 ? P[1].x : (k == 1 ? P[1].y : P[1].z);
-						double p2 = k == 0 ? P[2].x : (k == 1 ? P[2].y : P[2].z);
-						double p3 = k == 0 ? P[3].x : (k == 1 ? P[3].y : P[3].z);
+						double p0 = to_double(k == 0 ? P[0].x : (k == 1 ? P[0].y : P[0].z));
+						double p1 = to_double(k == 0 ? P[1].x : (k == 1 ? P[1].y : P[1].z));
+						double p2 = to_double(k == 0 ? P[2].x : (k == 1 ? P[2].y : P[2].z));
+						double p3 = to_double(k == 0 ? P[3].x : (k == 1 ? P[3].y : P[3].z));
 						r[k] = (w * w * w) * p0 + 3.0 * (w * w) * u * p1 + 3.0 * w * u * u * p2 + (u * u * u) * p3;
 					}
 				}
@@ -1711,14 +1730,14 @@ struct Replay::Impl {
 		}
 		return out;
 	}
-	FinalStroke *ResolveStroke(V3 pos, PointOnCurve &r_old, float &r_dist) {
+	FinalStroke *ResolveStroke(V3 pos, PointOnCurve &r_old, real &r_dist) {
 		std::vector<std::pair<double, int>> best;
 		for (FinalStroke *st : strokes) {
 			double m = std::numeric_limits<double>::infinity();
 			for (const std::array<double, 3> &q : Dense(*st->curve, 96)) {
-				double dx = q[0] - (double)pos.x;
-				double dy = q[1] - (double)pos.y;
-				double dz = q[2] - (double)pos.z;
+				double dx = q[0] - to_double(pos.x);
+				double dy = q[1] - to_double(pos.y);
+				double dz = q[2] - to_double(pos.z);
 				m = std::min(m, std::sqrt(dx * dx + dy * dy + dz * dz));
 			}
 			best.push_back(std::make_pair(m, st->ID));
@@ -1728,14 +1747,14 @@ struct Replay::Impl {
 		}
 		std::sort(best.begin(), best.end());
 		FinalStroke *win = nullptr;
-		float win_d = 0.0f;
+		real win_d = 0.0f;
 		for (const std::pair<double, int> &b : best) {
 			if (!(b.first < best[0].first + 2e-3)) {
 				continue;
 			}
 			FinalStroke *st = Find(b.second);
 			PointOnCurve poc = st->curve->Project(pos);
-			float d = Distance(poc.position, pos);
+			real d = Distance(poc.position, pos);
 			if (win == nullptr || d < win_d || (d == win_d && st->ID < win->ID)) {
 				win = st;
 				win_d = d;
@@ -1751,7 +1770,7 @@ Replay::Replay(WorldPoint p_canvas_origin, WorldPoint p_mirror_point, WorldPoint
 		impl(new Impl) {
 	impl->origin = p_canvas_origin;
 	impl->plane.p0 = impl->Local(p_mirror_point);
-	impl->plane.n = v3((float)p_mirror_normal.x, (float)p_mirror_normal.y, (float)p_mirror_normal.z);
+	impl->plane.n = v3(real(p_mirror_normal.x), real(p_mirror_normal.y), real(p_mirror_normal.z));
 	impl->plane.valid = true;
 }
 
@@ -1771,10 +1790,10 @@ void Replay::SetPendingPatches(const std::vector<LoggedPatch> &p_patches) {
 
 void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, const std::vector<RecordedConstraint> &p_constraints, bool p_closed_loop, bool p_mirroring, float p_canvas_scale) {
 	Impl &m = *impl;
-	float sd = 0.02f / p_canvas_scale;
-	float snap = sd;
-	float merge = sd * 0.5f;
-	float prox = sd * 2.0f;
+	real sd = real(0.02f) / real(p_canvas_scale);
+	real snap = sd;
+	real merge = sd * 0.5f;
+	real prox = sd * 2.0f;
 	std::vector<V3> ctrl;
 	for (const WorldPoint &p : p_ctrl_points) {
 		ctrl.push_back(m.Local(p));
@@ -1782,7 +1801,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 	Curve new_curve(ctrl);
 	bool on_mirror = true;
 	for (const V3 &p : ctrl) {
-		if (!(std::fabs(p.x - m.plane.p0.x) < 1e-6f)) {
+		if (!(Fabs(p.x - m.plane.p0.x) < 1e-6f)) {
 			on_mirror = false;
 		}
 	}
@@ -1799,15 +1818,15 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 		} else {
 			int nb = (int)new_curve.beziers.size();
 			int best_i = 0;
-			float best_a = std::numeric_limits<float>::infinity();
+			real best_a = kInf;
 			for (int i = 0; i <= nb; i++) {
-				float d = Distance(new_curve.ctrl[i * 3], pos);
+				real d = Distance(new_curve.ctrl[i * 3], pos);
 				if (d < best_a) {
 					best_a = d;
 					best_i = i;
 				}
 			}
-			nd.t = best_i == nb ? 1.0f : (0.0f + (float)best_i) / (float)nb;
+			nd.t = best_i == nb ? real(1.0f) : (real(0.0f) + real(best_i)) / real(nb);
 			nd.position = new_curve.ctrl[best_i * 3];
 		}
 		items.push_back(std::make_pair(nd, &c));
@@ -1823,7 +1842,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 		V3 pos = m.Local(c.position);
 		if (c.is_intersection) {
 			PointOnCurve old;
-			float dist = 0.0f;
+			real dist = 0.0f;
 			FinalStroke *best = m.ResolveStroke(pos, old, dist);
 			if (best == nullptr || dist > 1e-3f) {
 				m.stats.unresolved_constraints++;
@@ -1834,7 +1853,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 			in.old_data = old;
 			in.new_data = item.first;
 			intersections.push_back(in);
-		} else if (std::fabs((double)pos.x - (double)m.plane.p0.x) < 1e-5) {
+		} else if (std::fabs(to_double(pos.x) - to_double(m.plane.p0.x)) < 1e-5) {
 			seams.push_back(item.first);
 			m.stats.mirror_seam_constraints++;
 		}
@@ -1936,7 +1955,7 @@ bool Replay::AddUserPatches(const std::vector<LoggedPatch> &p_group) {
 					cnt++;
 				}
 			}
-			V3 pos = v3((float)(sx / cnt), (float)(sy / cnt), (float)(sz / cnt));
+			V3 pos = v3(real((float)(sx / cnt)), real((float)(sy / cnt)), real((float)(sz / cnt)));
 			bool have = false;
 			V3 found;
 			for (int lnm = 0; lnm < 2 && !have; lnm++) {
