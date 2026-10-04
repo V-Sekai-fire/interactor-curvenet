@@ -27,6 +27,7 @@
 #include "cassie_graph_port.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -97,13 +98,19 @@ bool Approximately(float a, float b) {
 
 // Quaternion.AngleAxis(deg, axis) * v, with Unity's quaternion-vector product.
 V3 RotateAngleAxis(float p_degrees, V3 p_axis, V3 v) {
-	V3 axis = Normalized(p_axis);
-	float half = p_degrees * kDeg2Rad * 0.5f;
-	float s = std::sin(half);
-	float qx = axis.x * s;
-	float qy = axis.y * s;
-	float qz = axis.z * s;
-	float qw = std::cos(half);
+	float mag = Mag(p_axis);
+	float qx = 0.0f;
+	float qy = 0.0f;
+	float qz = 0.0f;
+	float qw = 1.0f;
+	if (mag > 1e-6f) {
+		float half = (p_degrees * kDeg2Rad) * 0.5f;
+		qw = (float)std::cos((double)half);
+		float s = (float)std::sin((double)half) / mag;
+		qx = s * p_axis.x;
+		qy = s * p_axis.y;
+		qz = s * p_axis.z;
+	}
 	float n1 = qx * 2.0f;
 	float n2 = qy * 2.0f;
 	float n3 = qz * 2.0f;
@@ -518,6 +525,66 @@ public:
 	}
 };
 
+// .NET Dictionary<int, T>: enumeration walks entries, removal pushes a LIFO free list.
+template <class T>
+class CsDict {
+public:
+	struct Entry {
+		int key = 0;
+		T value = nullptr;
+		bool used = false;
+		int next_free = -1;
+	};
+	std::vector<Entry> entries;
+	std::map<int, int> index;
+	int free_list = -1;
+	int free_count = 0;
+	void Add(int k, T v) {
+		if (index.count(k)) {
+			throw CsException("ArgumentException");
+		}
+		int i = 0;
+		if (free_count > 0) {
+			i = free_list;
+			free_list = entries[i].next_free;
+			free_count--;
+		} else {
+			i = (int)entries.size();
+			entries.push_back(Entry());
+		}
+		entries[i].key = k;
+		entries[i].value = v;
+		entries[i].used = true;
+		entries[i].next_free = -1;
+		index[k] = i;
+	}
+	T Find(int k) const {
+		std::map<int, int>::const_iterator it = index.find(k);
+		return it == index.end() ? nullptr : entries[it->second].value;
+	}
+	void Remove(int k) {
+		std::map<int, int>::iterator it = index.find(k);
+		if (it == index.end()) {
+			return;
+		}
+		int i = it->second;
+		index.erase(it);
+		entries[i] = Entry();
+		entries[i].next_free = free_list;
+		free_list = i;
+		free_count++;
+	}
+	std::vector<T> Values() const {
+		std::vector<T> out;
+		for (const Entry &e : entries) {
+			if (e.used) {
+				out.push_back(e.value);
+			}
+		}
+		return out;
+	}
+};
+
 class Node {
 public:
 	int ID;
@@ -606,6 +673,7 @@ class Cycle {
 public:
 	std::list<HalfSegment> HalfSegments;
 	bool userCreated;
+	int patchID = -1;
 	int hashCode = 0;
 	bool updateHashCode = true;
 
@@ -717,7 +785,7 @@ public:
 	CsHashSet<Segment *> _updatedSegmentsCache{ SegmentHash, SegmentEq };
 	CsHashSet<Cycle *> _cyclesToCheckCache{ CycleHash, CycleEq };
 	std::map<int, Node *> _nodes;
-	std::map<int, Segment *> _segments;
+	CsDict<Segment *> _segments;
 	std::map<int, SegmentCycles> _cyclesBySegment;
 	CsHashSet<Cycle *> _cycles{ CycleHash, CycleEq };
 	int _segmentID = 0;
@@ -738,7 +806,7 @@ public:
 		int id = _segmentID++;
 		segment_pool.push_back(std::unique_ptr<Segment>(new Segment(id, s, start, end, startNode, endNode)));
 		Segment *seg = segment_pool.back().get();
-		_segments[id] = seg;
+		_segments.Add(id, seg);
 		if (surfacing && onNewStroke) {
 			_updatedSegmentsCache.Add(seg);
 		}
@@ -752,6 +820,12 @@ public:
 			_cyclesBySegment[hs.GetSegmentID()].Add(newCycle);
 		}
 		if (_toRemoveCache.Contains(newCycle)) {
+			for (Cycle *old : _toRemoveCache.Items()) {
+				if (old->Equals(newCycle)) {
+					newCycle->patchID = old->patchID;
+					break;
+				}
+			}
 			_toRemoveCache.Remove(newCycle);
 		} else {
 			_toAddCache.push_back(newCycle);
@@ -805,7 +879,7 @@ public:
 		if (end->TryRemove()) {
 			RemoveNode(end);
 		}
-		_segments.erase(s->ID);
+		_segments.Remove(s->ID);
 		DeleteCycles(s);
 		_updatedSegmentsCache.Remove(s);
 	}
@@ -820,7 +894,7 @@ public:
 		}
 		_cyclesBySegment.erase(sRemove->ID);
 		SetEnd(sKeep, sRemove->GetEndParam(), sRemove->GetEndNode(), false);
-		_segments.erase(sRemove->ID);
+		_segments.Remove(sRemove->ID);
 		sRemove->Delete();
 		_updatedSegmentsCache.Remove(sRemove);
 	}
@@ -828,10 +902,72 @@ public:
 		std::map<int, SegmentCycles>::const_iterator it = _cyclesBySegment.find(s->ID);
 		return it == _cyclesBySegment.end() ? 0 : it->second.CyclesCount();
 	}
-	void Update() {
+	void Update(std::vector<Cycle *> &r_add, std::vector<Cycle *> &r_remove) {
+		r_add = _toAddCache;
+		r_remove = _toRemoveCache.Items();
 		_toAddCache.clear();
 		_toRemoveCache.Clear();
 	}
+	bool ManualDeletePatch(int patchID) {
+		for (Cycle *c : _cycles.Items()) {
+			if (c->patchID == patchID) {
+				RemoveCycle(c, true);
+				return true;
+			}
+		}
+		return false;
+	}
+	Segment *FindClosestSegment(V3 pos, bool lookAtNonManifold) {
+		Segment *closest = nullptr;
+		float minDist = 10.0f;
+		for (Segment *s : _segments.Values()) {
+			if (!lookAtNonManifold) {
+				std::map<int, SegmentCycles>::iterator it = _cyclesBySegment.find(s->ID);
+				if (it != _cyclesBySegment.end() && it->second.CyclesCount() >= 2) {
+					continue;
+				}
+			}
+			if (s->GetStartNode()->IncidentCount() < 2 || s->GetEndNode()->IncidentCount() < 2) {
+				continue;
+			}
+			float avg = (Distance(s->GetStartNode()->Position, pos) + Distance(s->GetEndNode()->Position, pos) + Distance(s->GetPointAt(0.5f), pos)) / 3.0f;
+			if (avg < minDist) {
+				closest = s;
+				minDist = avg;
+			}
+		}
+		return closest;
+	}
+	Segment *FindClosestAmongNeighbors(V3 pos, Node *node, Segment *current, bool lookAtNonManifold) {
+		Segment *closest = nullptr;
+		float minDistNext = 10.0f;
+		std::list<Segment *> copy = node->Neighbors;
+		for (Segment *s : copy) {
+			if (s == current) {
+				continue;
+			}
+			if (!lookAtNonManifold && ExistingCyclesCount(s) >= 2) {
+				break;
+			}
+			if (s->GetOpposite(node)->IncidentCount() < 2) {
+				continue;
+			}
+			float dt = 1.0f / 5.0f;
+			float dist = std::numeric_limits<float>::infinity();
+			for (int i = 1; i <= 5; i++) {
+				float d = Distance(s->GetPointAt((float)i * dt), pos);
+				if (d < dist) {
+					dist = d;
+				}
+			}
+			if (dist < minDistNext) {
+				closest = s;
+				minDistNext = dist;
+			}
+		}
+		return closest;
+	}
+	bool TryFindCycleAt(V3 pos, bool lookAtNonManifold);
 	void TryFindAllCycles();
 	void UpdateNeighbors(Segment *s, Node *n) {
 		if (!surfacing) {
@@ -911,11 +1047,10 @@ public:
 	}
 	Segment *TryRemove(Cycle *c) {
 		const HalfSegment &hs = c->HalfSegments.front();
-		std::map<int, Segment *>::iterator it = _segments.find(hs.GetSegmentID());
-		if (it == _segments.end()) {
+		Segment *seed = _segments.Find(hs.GetSegmentID());
+		if (seed == nullptr) {
 			throw CsException("KeyNotFoundException");
 		}
-		Segment *seed = it->second;
 		RemoveCycle(c);
 		return seed;
 	}
@@ -1387,6 +1522,55 @@ bool DetectCycle(Graph *g, Segment *startSegment, Node *startNode, std::list<Hal
 	return finalNode == oppositeNode && currentSegment == startSegment && cycle.size() > 1;
 }
 
+bool DetectCycleAt(Graph *g, V3 inputPos, bool lookAtNonManifold, std::list<HalfSegment> &cycle) {
+	Segment *closest = g->FindClosestSegment(inputPos, lookAtNonManifold);
+	if (closest == nullptr) {
+		return false;
+	}
+	if (closest->GetStartNode() == closest->GetEndNode()) {
+		HalfSegment hs;
+		hs.segment = closest;
+		hs.IsReversed = false;
+		cycle.push_back(hs);
+		return true;
+	}
+	Node *startNode = closest->GetStartNode();
+	Node *currentNode = startNode;
+	Segment *currentSegment = closest;
+	int counter = 0;
+	while (counter <= 10) {
+		if (ListContains(cycle, currentSegment)) {
+			break;
+		}
+		HalfSegment hs;
+		hs.segment = currentSegment;
+		hs.IsReversed = !currentSegment->IsInReverse(currentNode);
+		cycle.push_back(hs);
+		currentNode = currentSegment->GetOpposite(currentNode);
+		Segment *nextSegment = g->FindClosestAmongNeighbors(inputPos, currentNode, currentSegment, lookAtNonManifold);
+		if (nextSegment == nullptr) {
+			break;
+		}
+		if (Dot(currentSegment->GetTangentAt(currentNode), nextSegment->GetTangentAt(currentNode)) < 0.8f) {
+			counter++;
+		}
+		currentSegment = nextSegment;
+	}
+	return currentNode == startNode && currentSegment == closest && cycle.size() > 1;
+}
+
+bool Graph::TryFindCycleAt(V3 pos, bool lookAtNonManifold) {
+	if (!surfacing) {
+		return false;
+	}
+	std::list<HalfSegment> segs;
+	if (DetectCycleAt(this, pos, lookAtNonManifold, segs)) {
+		cycle_pool.push_back(std::unique_ptr<Cycle>(new Cycle(true, segs)));
+		return TryAddCycle(cycle_pool.back().get());
+	}
+	return false;
+}
+
 void Graph::TryFindCycle(Segment *startSegment, Node *startNode, bool reversed) {
 	std::list<HalfSegment> segs;
 	if (DetectCycle(this, startSegment, startNode, segs, reversed)) {
@@ -1438,12 +1622,14 @@ void Graph::TryFindAllCycles() {
 struct Replay::Impl {
 	WorldPoint origin;
 	Plane plane;
-	float snap = 0.02f * 1.0f;
-	float merge = 0.02f * 0.5f;
 	Graph graph;
 	std::vector<std::unique_ptr<FinalStroke>> pool;
 	std::vector<FinalStroke *> strokes;
 	std::map<int, FinalStroke *> mirrored;
+	std::vector<LoggedPatch> pending;
+	std::map<int, Cycle *> alive_patch;
+	std::map<std::vector<int>, Cycle *> user_deleted;
+	int fresh = 1000000;
 	ReplayStats stats;
 
 	V3 Local(const WorldPoint &p) const {
@@ -1462,9 +1648,102 @@ struct Replay::Impl {
 		}
 		return nullptr;
 	}
+	static std::vector<int> Key(const std::vector<int> &ids) {
+		std::vector<int> k = ids;
+		std::sort(k.begin(), k.end());
+		return k;
+	}
+	// Assigns logged patch ids to new cycles, as the session's surface manager did.
+	void Sink(const std::vector<Cycle *> &to_add, const std::vector<Cycle *> &to_remove) {
+		for (Cycle *c : to_remove) {
+			alive_patch.erase(c->patchID);
+		}
+		for (Cycle *c : to_add) {
+			std::vector<int> k = Key(c->StrokeIDs());
+			int pid = -1;
+			for (size_t i = 0; i < pending.size(); i++) {
+				if (Key(pending[i].strokes) == k && pending[i].found_by_algo == !c->userCreated) {
+					pid = pending[i].id;
+					pending.erase(pending.begin() + i);
+					break;
+				}
+			}
+			if (pid < 0) {
+				pid = fresh++;
+			}
+			c->patchID = pid;
+			alive_patch[pid] = c;
+		}
+	}
 	void GraphUpdate() {
 		graph.TryFindAllCycles();
-		graph.Update();
+		std::vector<Cycle *> to_add;
+		std::vector<Cycle *> to_remove;
+		graph.Update(to_add, to_remove);
+		Sink(to_add, to_remove);
+	}
+	// Float64 Bernstein samples, used only to shortlist strokes before the float32 projection.
+	static std::vector<std::array<double, 3>> Dense(const Curve &c, int per) {
+		std::vector<std::array<double, 3>> out;
+		double step = 1.0 / (double)(per - 1);
+		int nb = c.is_line ? 1 : (int)c.beziers.size();
+		for (int b = 0; b < nb; b++) {
+			for (int i = 0; i < per; i++) {
+				double u = i == per - 1 ? 1.0 : (double)i * step;
+				double w = 1.0 - u;
+				std::array<double, 3> r;
+				for (int k = 0; k < 3; k++) {
+					if (c.is_line) {
+						double a = k == 0 ? c.A.x : (k == 1 ? c.A.y : c.A.z);
+						double e = k == 0 ? c.B.x : (k == 1 ? c.B.y : c.B.z);
+						r[k] = w * a + u * e;
+					} else {
+						const V3 *P = &c.ctrl[3 * b];
+						double p0 = k == 0 ? P[0].x : (k == 1 ? P[0].y : P[0].z);
+						double p1 = k == 0 ? P[1].x : (k == 1 ? P[1].y : P[1].z);
+						double p2 = k == 0 ? P[2].x : (k == 1 ? P[2].y : P[2].z);
+						double p3 = k == 0 ? P[3].x : (k == 1 ? P[3].y : P[3].z);
+						r[k] = (w * w * w) * p0 + 3.0 * (w * w) * u * p1 + 3.0 * w * u * u * p2 + (u * u * u) * p3;
+					}
+				}
+				out.push_back(r);
+			}
+		}
+		return out;
+	}
+	FinalStroke *ResolveStroke(V3 pos, PointOnCurve &r_old, float &r_dist) {
+		std::vector<std::pair<double, int>> best;
+		for (FinalStroke *st : strokes) {
+			double m = std::numeric_limits<double>::infinity();
+			for (const std::array<double, 3> &q : Dense(*st->curve, 96)) {
+				double dx = q[0] - (double)pos.x;
+				double dy = q[1] - (double)pos.y;
+				double dz = q[2] - (double)pos.z;
+				m = std::min(m, std::sqrt(dx * dx + dy * dy + dz * dz));
+			}
+			best.push_back(std::make_pair(m, st->ID));
+		}
+		if (best.empty()) {
+			return nullptr;
+		}
+		std::sort(best.begin(), best.end());
+		FinalStroke *win = nullptr;
+		float win_d = 0.0f;
+		for (const std::pair<double, int> &b : best) {
+			if (!(b.first < best[0].first + 2e-3)) {
+				continue;
+			}
+			FinalStroke *st = Find(b.second);
+			PointOnCurve poc = st->curve->Project(pos);
+			float d = Distance(poc.position, pos);
+			if (win == nullptr || d < win_d || (d == win_d && st->ID < win->ID)) {
+				win = st;
+				win_d = d;
+				r_old = poc;
+			}
+		}
+		r_dist = win_d;
+		return win;
 	}
 };
 
@@ -1472,7 +1751,7 @@ Replay::Replay(WorldPoint p_canvas_origin, WorldPoint p_mirror_point, WorldPoint
 		impl(new Impl) {
 	impl->origin = p_canvas_origin;
 	impl->plane.p0 = impl->Local(p_mirror_point);
-	impl->plane.n = Normalized(v3((float)p_mirror_normal.x, (float)p_mirror_normal.y, (float)p_mirror_normal.z));
+	impl->plane.n = v3((float)p_mirror_normal.x, (float)p_mirror_normal.y, (float)p_mirror_normal.z);
 	impl->plane.valid = true;
 }
 
@@ -1486,8 +1765,16 @@ struct Intersection {
 	PointOnCurve new_data;
 };
 
-void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, const std::vector<RecordedConstraint> &p_constraints, bool p_closed_loop, bool p_mirroring) {
+void Replay::SetPendingPatches(const std::vector<LoggedPatch> &p_patches) {
+	impl->pending = p_patches;
+}
+
+void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, const std::vector<RecordedConstraint> &p_constraints, bool p_closed_loop, bool p_mirroring, float p_canvas_scale) {
 	Impl &m = *impl;
+	float sd = 0.02f / p_canvas_scale;
+	float snap = sd;
+	float merge = sd * 0.5f;
+	float prox = sd * 2.0f;
 	std::vector<V3> ctrl;
 	for (const WorldPoint &p : p_ctrl_points) {
 		ctrl.push_back(m.Local(p));
@@ -1495,16 +1782,12 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 	Curve new_curve(ctrl);
 	bool on_mirror = true;
 	for (const V3 &p : ctrl) {
-		if (std::fabs(Dot(m.plane.n, p - m.plane.p0)) >= 1e-6f) {
+		if (!(std::fabs(p.x - m.plane.p0.x) < 1e-6f)) {
 			on_mirror = false;
 		}
 	}
-	// The recording omits which stroke a constraint hit; it lies on that stroke's curve.
-	std::vector<Intersection> intersections;
-	std::vector<PointOnCurve> seams;
 	// Constraints were applied at the new curve's anchors (a line takes its projection), sorted by t on a line.
 	std::vector<std::pair<PointOnCurve, const RecordedConstraint *>> items;
-	float prox = 0.02f * 2.0f;
 	for (const RecordedConstraint &c : p_constraints) {
 		V3 pos = m.Local(c.position);
 		PointOnCurve nd;
@@ -1524,7 +1807,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 					best_i = i;
 				}
 			}
-			nd.t = best_i == nb ? 1.0f : ((float)best_i + 0.0f) / (float)nb;
+			nd.t = best_i == nb ? 1.0f : (0.0f + (float)best_i) / (float)nb;
 			nd.position = new_curve.ctrl[best_i * 3];
 		}
 		items.push_back(std::make_pair(nd, &c));
@@ -1532,42 +1815,36 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 	if (new_curve.is_line) {
 		std::stable_sort(items.begin(), items.end(), [](const std::pair<PointOnCurve, const RecordedConstraint *> &a, const std::pair<PointOnCurve, const RecordedConstraint *> &b) { return a.first.t < b.first.t; });
 	}
+	// The recording omits which stroke a constraint hit; it lies on that stroke's curve.
+	std::vector<Intersection> intersections;
+	std::vector<PointOnCurve> seams;
 	for (const std::pair<PointOnCurve, const RecordedConstraint *> &item : items) {
 		const RecordedConstraint &c = *item.second;
 		V3 pos = m.Local(c.position);
-		bool at_plane = std::fabs(Dot(m.plane.n, pos - m.plane.p0)) < 1e-5f;
-		if (!c.is_intersection) {
-			if (at_plane && p_mirroring) {
-				seams.push_back(item.first);
-				m.stats.mirror_seam_constraints++;
+		if (c.is_intersection) {
+			PointOnCurve old;
+			float dist = 0.0f;
+			FinalStroke *best = m.ResolveStroke(pos, old, dist);
+			if (best == nullptr || dist > 1e-3f) {
+				m.stats.unresolved_constraints++;
+				continue;
 			}
-			continue;
+			Intersection in;
+			in.old_stroke = best;
+			in.old_data = old;
+			in.new_data = item.first;
+			intersections.push_back(in);
+		} else if (std::fabs((double)pos.x - (double)m.plane.p0.x) < 1e-5) {
+			seams.push_back(item.first);
+			m.stats.mirror_seam_constraints++;
 		}
-		FinalStroke *best = nullptr;
-		float best_d = 1e-3f;
-		for (FinalStroke *s : m.strokes) {
-			float d = Distance(s->curve->Project(pos).position, pos);
-			if (d < best_d) {
-				best_d = d;
-				best = s;
-			}
-		}
-		if (best == nullptr) {
-			m.stats.unresolved_constraints++;
-			continue;
-		}
-		Intersection in;
-		in.old_stroke = best;
-		in.old_data = best->GetConstraint(pos, m.snap);
-		in.new_data = item.first;
-		intersections.push_back(in);
 	}
 	try {
 		FinalStroke *fs = m.NewStroke(p_id);
 		fs->SetCurve(ctrl, p_closed_loop);
 		for (const Intersection &in : intersections) {
-			Node *node = in.old_stroke->AddIntersectionOldStroke(in.old_data, m.snap);
-			fs->AddIntersectionNewStroke(node, in.new_data, m.merge);
+			Node *node = in.old_stroke->AddIntersectionOldStroke(in.old_data, snap);
+			fs->AddIntersectionNewStroke(node, in.new_data, merge);
 		}
 		if (p_mirroring) {
 			if (on_mirror) {
@@ -1587,15 +1864,15 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 					if (it != m.mirrored.end()) {
 						PointOnCurve mo = in.old_data;
 						mo.position = m.plane.Mirror(mo.position);
-						Node *node = it->second->AddIntersectionOldStroke(mo, m.snap);
+						Node *node = it->second->AddIntersectionOldStroke(mo, snap);
 						PointOnCurve mn = in.new_data;
 						mn.position = m.plane.Mirror(mn.position);
-						ms->AddIntersectionNewStroke(node, mn, m.merge);
+						ms->AddIntersectionNewStroke(node, mn, merge);
 					}
 				}
 				for (const PointOnCurve &seam : seams) {
-					Node *node = fs->AddIntersectionOldStroke(seam, m.snap);
-					ms->AddIntersectionNewStroke(node, seam, m.merge);
+					Node *node = fs->AddIntersectionOldStroke(seam, snap);
+					ms->AddIntersectionNewStroke(node, seam, merge);
 				}
 				m.strokes.push_back(ms);
 				m.GraphUpdate();
@@ -1633,14 +1910,104 @@ void Replay::DeleteStroke(int p_id, bool p_mirroring) {
 	}
 }
 
-std::vector<std::vector<int>> Replay::Cycles() const {
+// The log keeps no click position in canvas space, so each user patch is searched from its strokes' centroid and segment midpoints.
+bool Replay::AddUserPatches(const std::vector<LoggedPatch> &p_group) {
+	Impl &m = *impl;
+	m.pending = p_group;
+	bool any_ok = false;
+	try {
+		for (const LoggedPatch &q : p_group) {
+			std::vector<int> want = Impl::Key(q.strokes);
+			std::vector<int> uniq = want;
+			uniq.erase(std::unique(uniq.begin(), uniq.end()), uniq.end());
+			double sx = 0.0;
+			double sy = 0.0;
+			double sz = 0.0;
+			int cnt = 0;
+			for (int sid : uniq) {
+				FinalStroke *st = m.Find(sid);
+				if (st == nullptr) {
+					continue;
+				}
+				for (const std::array<double, 3> &p : Impl::Dense(*st->curve, 32)) {
+					sx += p[0];
+					sy += p[1];
+					sz += p[2];
+					cnt++;
+				}
+			}
+			V3 pos = v3((float)(sx / cnt), (float)(sy / cnt), (float)(sz / cnt));
+			bool have = false;
+			V3 found;
+			for (int lnm = 0; lnm < 2 && !have; lnm++) {
+				std::vector<V3> cands;
+				cands.push_back(pos);
+				for (Segment *sg : m.graph._segments.Values()) {
+					if (std::binary_search(uniq.begin(), uniq.end(), sg->Stroke->ID)) {
+						cands.push_back(sg->GetPointAt(0.5f));
+					}
+				}
+				for (const V3 &cp : cands) {
+					std::list<HalfSegment> cyc;
+					bool okc = DetectCycleAt(&m.graph, cp, lnm == 1, cyc);
+					std::vector<int> ids;
+					for (const HalfSegment &hs : cyc) {
+						ids.push_back(hs.segment->Stroke->ID);
+					}
+					if (okc && Impl::Key(ids) == want) {
+						found = cp;
+						have = true;
+						break;
+					}
+				}
+			}
+			bool ok = false;
+			if (have) {
+				ok = m.graph.TryFindCycleAt(found, false) || m.graph.TryFindCycleAt(found, true);
+			} else if (m.user_deleted.count(want)) {
+				m.stats.user_fallbacks++;
+				m.graph.cycle_pool.push_back(std::unique_ptr<Cycle>(new Cycle(true, m.user_deleted[want]->HalfSegments)));
+				ok = m.graph.TryAddCycle(m.graph.cycle_pool.back().get());
+			} else {
+				m.stats.user_fallbacks++;
+				ok = m.graph.TryFindCycleAt(pos, false) || m.graph.TryFindCycleAt(pos, true);
+			}
+			any_ok = any_ok || ok;
+		}
+		if (any_ok) {
+			m.GraphUpdate();
+		}
+	} catch (const CsException &) {
+		m.stats.caught_exceptions++;
+	}
+	return any_ok;
+}
+
+bool Replay::DeletePatch(int p_id) {
+	Impl &m = *impl;
+	std::map<int, Cycle *>::iterator it = m.alive_patch.find(p_id);
+	if (it == m.alive_patch.end()) {
+		m.stats.missing_patch_deletes++;
+		return false;
+	}
+	m.user_deleted[Impl::Key(it->second->StrokeIDs())] = it->second;
+	m.graph.ManualDeletePatch(p_id);
+	m.alive_patch.erase(p_id);
+	return true;
+}
+
+std::vector<std::vector<int>> Replay::Cycles(bool p_include_user) const {
 	std::vector<std::vector<int>> out;
 	for (Cycle *c : impl->graph._cycles.Items()) {
+		if (c->userCreated && !p_include_user) {
+			continue;
+		}
 		std::vector<int> ids = c->StrokeIDs();
 		std::sort(ids.begin(), ids.end());
 		ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
 		out.push_back(ids);
 	}
+	std::sort(out.begin(), out.end());
 	return out;
 }
 

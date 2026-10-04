@@ -51,6 +51,14 @@ struct ReplayStats {
 	int mirror_seam_constraints = 0;
 	int caught_exceptions = 0;
 	int on_mirror_strokes = 0;
+	int user_fallbacks = 0;
+	int missing_patch_deletes = 0;
+};
+
+struct LoggedPatch {
+	int id = -1;
+	std::vector<int> strokes;
+	bool found_by_algo = true;
 };
 
 class Replay {
@@ -60,9 +68,13 @@ public:
 	Replay(const Replay &) = delete;
 	Replay &operator=(const Replay &) = delete;
 
-	void AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, const std::vector<RecordedConstraint> &p_constraints, bool p_closed_loop, bool p_mirroring);
+	// Patches logged since the last stroke event; new cycles take their ids.
+	void SetPendingPatches(const std::vector<LoggedPatch> &p_patches);
+	void AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, const std::vector<RecordedConstraint> &p_constraints, bool p_closed_loop, bool p_mirroring, float p_canvas_scale);
 	void DeleteStroke(int p_id, bool p_mirroring);
-	std::vector<std::vector<int>> Cycles() const;
+	bool AddUserPatches(const std::vector<LoggedPatch> &p_group);
+	bool DeletePatch(int p_id);
+	std::vector<std::vector<int>> Cycles(bool p_include_user) const;
 	ReplayStats Stats() const;
 
 private:
