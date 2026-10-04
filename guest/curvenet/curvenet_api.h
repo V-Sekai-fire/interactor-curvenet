@@ -84,6 +84,10 @@ std::vector<int32_t> mesh_rims();
 // it came from; after a remesh, the patch nearest its centroid.
 std::vector<int32_t> mesh_patch_ids();
 
+// Replays a CASSIE session (graph_port/session_replay.h) through the graph port:
+// "ok cycles=N user=M ..." then one sorted stroke-id line per algorithm cycle.
+std::string session_replay(const std::string &json);
+
 // --- checks (checks.cpp) ------------------------------------------------------
 // One line per check:
 //   "PASS <name> ints=a,b,c fsig=<12 hex>/<count> :: <detail>"

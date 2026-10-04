@@ -15,6 +15,7 @@
 #include "scene/resources/mesh.h"
 
 #include "common/mesh_wire.h"
+#include "graph_port/session_replay.h"
 
 #include <pmp/algorithms/remeshing.h>
 #include <pmp/surface_mesh.h>
@@ -970,6 +971,10 @@ std::vector<float> stroke_samples() {
 		}
 	}
 	return out;
+}
+
+std::string session_replay(const std::string &json) {
+	return cassie_graph_port::FormatSessionResult(cassie_graph_port::ReplaySession(json, false));
 }
 
 } // namespace cn

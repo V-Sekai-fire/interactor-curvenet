@@ -158,6 +158,10 @@ static Variant mesh_patch_ids() {
 	return packed(cn::mesh_patch_ids());
 }
 
+static Variant session_replay(String json) {
+	return text(cn::session_replay(json.utf8()));
+}
+
 // --- checks -------------------------------------------------------------------
 
 static Variant check(String name) {
@@ -211,6 +215,8 @@ int main() {
 	ADD_API_FUNCTION(mesh_boundary_loops, "PackedInt32Array", "", "The built mesh's boundary loops");
 	ADD_API_FUNCTION(mesh_rims, "PackedInt32Array", "", "The drawn surface's boundary loops, open or closed into the shell");
 	ADD_API_FUNCTION(mesh_patch_ids, "PackedInt32Array", "", "Source patch per triangle (-1 after a remesh)");
+	ADD_API_FUNCTION(session_replay, "String", "String json",
+			"Replay a CASSIE session through the graph port: ok cycles=N user=M, then a stroke-id line per cycle");
 	ADD_API_FUNCTION(check, "String", "String name", "One Gate 4 check");
 	ADD_API_FUNCTION(check_all, "String", "", "Every Gate 4 check");
 	ADD_API_FUNCTION(check_names, "String", "", "The Gate 4 check names");

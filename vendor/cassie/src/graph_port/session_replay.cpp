@@ -1,0 +1,307 @@
+/**************************************************************************/
+/*  session_replay.cpp                                                    */
+/**************************************************************************/
+/* Ported from CASSIE (Yu, Arora, Stanko, Baerentzen, Singh, Bousseau),   */
+/* MIT. Copyright (c) 2021 Emilie Yu and the CASSIE authors.              */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+
+#include "session_replay.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <map>
+
+namespace cassie_graph_port {
+
+namespace {
+
+struct Json {
+	enum Kind { NUL, BOOL, NUM, STR, ARR, OBJ } kind = NUL;
+	bool b = false;
+	double num = 0.0;
+	std::string str;
+	std::vector<Json> arr;
+	std::vector<std::pair<std::string, Json>> obj;
+	const Json &operator[](const char *k) const {
+		static const Json none;
+		for (const std::pair<std::string, Json> &kv : obj) {
+			if (kv.first == k) {
+				return kv.second;
+			}
+		}
+		return none;
+	}
+};
+
+struct Parser {
+	const char *p = nullptr;
+	bool bad = false;
+	void ws() {
+		while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') {
+			p++;
+		}
+	}
+	std::string str() {
+		std::string s;
+		p++;
+		while (*p != '"' && *p != '\0') {
+			if (*p == '\\' && p[1] != '\0') {
+				p++;
+			}
+			s += *p++;
+		}
+		if (*p == '\0') {
+			bad = true;
+			return s;
+		}
+		p++;
+		return s;
+	}
+	Json value() {
+		ws();
+		Json j;
+		if (bad || *p == '\0') {
+			bad = true;
+		} else if (*p == '{') {
+			j.kind = Json::OBJ;
+			p++;
+			ws();
+			while (!bad && *p != '}') {
+				if (*p != '"') {
+					bad = true;
+					break;
+				}
+				std::string k = str();
+				ws();
+				if (*p != ':') {
+					bad = true;
+					break;
+				}
+				p++;
+				Json v = value();
+				j.obj.push_back(std::make_pair(k, v));
+				ws();
+				if (*p == ',') {
+					p++;
+				}
+				ws();
+			}
+			if (!bad) {
+				p++;
+			}
+		} else if (*p == '[') {
+			j.kind = Json::ARR;
+			p++;
+			ws();
+			while (!bad && *p != ']') {
+				j.arr.push_back(value());
+				ws();
+				if (*p == ',') {
+					p++;
+				}
+				ws();
+			}
+			if (!bad) {
+				p++;
+			}
+		} else if (*p == '"') {
+			j.kind = Json::STR;
+			j.str = str();
+		} else if (*p == 't' || *p == 'f') {
+			j.kind = Json::BOOL;
+			j.b = *p == 't';
+			p += j.b ? 4 : 5;
+		} else if (*p == 'n') {
+			p += 4;
+		} else {
+			j.kind = Json::NUM;
+			char *end = nullptr;
+			// Unity parsed these as float; round once to float, then widen.
+			j.num = (double)std::strtof(p, &end);
+			if (end == p) {
+				bad = true;
+			} else {
+				p = end;
+			}
+		}
+		return j;
+	}
+};
+
+WorldPoint Point(const Json &j) {
+	WorldPoint w;
+	w.x = j["x"].num;
+	w.y = j["y"].num;
+	w.z = j["z"].num;
+	return w;
+}
+
+std::vector<std::vector<int>> Sorted(std::vector<std::vector<int>> p_cycles) {
+	for (std::vector<int> &c : p_cycles) {
+		std::sort(c.begin(), c.end());
+	}
+	return p_cycles;
+}
+
+void Run(const Json &root, bool p_trace, SessionResult &r) {
+	std::map<int, const Json *> by_id;
+	for (const Json &s : root["allSketchedStrokes"].arr) {
+		by_id[(int)s["id"].num] = &s;
+	}
+	std::map<int, LoggedPatch> patches;
+	for (const Json &p : root["allCreatedPatches"].arr) {
+		LoggedPatch lp;
+		lp.id = (int)p["id"].num;
+		lp.found_by_algo = p["foundByAlgo"].b;
+		for (const Json &v : p["strokesID"].arr) {
+			lp.strokes.push_back((int)v.num);
+		}
+		patches[lp.id] = lp;
+	}
+	WorldPoint origin;
+	WorldPoint mirror_point;
+	mirror_point.x = 0.125;
+	mirror_point.y = 0.125;
+	mirror_point.z = 0.125;
+	WorldPoint mirror_normal;
+	mirror_normal.x = 1.0;
+	Replay replay(origin, mirror_point, mirror_normal);
+	std::vector<LoggedPatch> pending_log;
+	const std::vector<Json> &states = root["systemStates"].arr;
+	size_t i = 0;
+	while (i < states.size()) {
+		const Json &st = states[i];
+		int type = (int)st["interactionType"].num;
+		int id = (int)st["elementID"].num;
+		bool mirroring = st["mirroring"].b;
+		size_t next = i + 1;
+		if (type == 3 && patches[id].found_by_algo) {
+			pending_log.push_back(patches[id]);
+		} else if (type == 3) {
+			std::vector<LoggedPatch> grp;
+			grp.push_back(patches[id]);
+			while (next < states.size() && (int)states[next]["interactionType"].num == 3 && !patches[(int)states[next]["elementID"].num].found_by_algo && states[next]["time"].num == st["time"].num) {
+				grp.push_back(patches[(int)states[next]["elementID"].num]);
+				next++;
+			}
+			replay.AddUserPatches(grp);
+		} else if (type == 4) {
+			replay.DeletePatch(id);
+		} else if (type == 1 || type == 2) {
+			replay.SetPendingPatches(pending_log);
+			pending_log.clear();
+			if (type == 1) {
+				std::map<int, const Json *>::const_iterator found = by_id.find(id);
+				if (found == by_id.end()) {
+					r.error = "stroke " + std::to_string(id) + " is not in allSketchedStrokes";
+					return;
+				}
+				const Json &s = *found->second;
+				std::vector<WorldPoint> ctrl;
+				for (const Json &p : s["ctrlPts"].arr) {
+					ctrl.push_back(Point(p));
+				}
+				std::vector<const Json *> recorded;
+				for (const Json &c : s["appliedPositionConstraints"].arr) {
+					recorded.push_back(&c);
+				}
+				// A line curve's rejected constraints still land on it within 0.1 r_proximity.
+				if (ctrl.size() == 2) {
+					for (const Json &c : s["rejectedPositionConstraints"].arr) {
+						recorded.push_back(&c);
+					}
+				}
+				std::vector<RecordedConstraint> cons;
+				for (const Json *cp : recorded) {
+					RecordedConstraint rc;
+					rc.position = Point((*cp)["position"]);
+					rc.is_intersection = (*cp)["isIntersection"].b;
+					rc.is_at_existing_node = (*cp)["isAtExistingNode"].b;
+					rc.is_at_new_endpoint = (*cp)["isAtNewEndpoint"].b;
+					cons.push_back(rc);
+				}
+				replay.AddStroke(id, ctrl, cons, s["closedLoop"].b, mirroring, (float)st["canvasScale"].num);
+			} else {
+				replay.DeleteStroke(id, mirroring);
+			}
+		}
+		if (p_trace && type >= 1 && type <= 4) {
+			r.trace.push_back(std::make_pair((int)i, replay.Cycles(true)));
+		}
+		i = next;
+	}
+	r.cycles = Sorted(replay.Cycles(false));
+	r.user_cycles = (int)replay.Cycles(true).size() - (int)r.cycles.size();
+	r.stats = replay.Stats();
+	r.ok = true;
+}
+
+} // namespace
+
+SessionResult ReplaySession(const std::string &p_json, bool p_trace) {
+	SessionResult r;
+	Parser parser;
+	parser.p = p_json.c_str();
+	Json root = parser.value();
+	if (parser.bad || root.kind != Json::OBJ) {
+		r.error = "session is not a JSON object";
+		return r;
+	}
+	if (root["systemStates"].kind != Json::ARR) {
+		r.error = "session has no systemStates";
+		return r;
+	}
+	try {
+		Run(root, p_trace, r);
+	} catch (const std::exception &e) {
+		r.ok = false;
+		r.error = std::string("replay threw: ") + e.what();
+	}
+	return r;
+}
+
+std::string FormatSessionResult(const SessionResult &p_result) {
+	if (!p_result.ok) {
+		return "error " + p_result.error + "\n";
+	}
+	std::string out = "ok cycles=" + std::to_string(p_result.cycles.size()) + " user=" + std::to_string(p_result.user_cycles);
+	const ReplayStats &s = p_result.stats;
+	char buf[192];
+	std::snprintf(buf, sizeof(buf), " unresolved=%d seams=%d on_mirror=%d user_fallbacks=%d missing_patch_deletes=%d exceptions=%d\n",
+			s.unresolved_constraints, s.mirror_seam_constraints, s.on_mirror_strokes, s.user_fallbacks, s.missing_patch_deletes, s.caught_exceptions);
+	out += buf;
+	for (const std::vector<int> &c : p_result.cycles) {
+		for (size_t k = 0; k < c.size(); k++) {
+			if (k > 0) {
+				out += ' ';
+			}
+			out += std::to_string(c[k]);
+		}
+		out += '\n';
+	}
+	return out;
+}
+
+} // namespace cassie_graph_port

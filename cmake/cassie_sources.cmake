@@ -69,6 +69,13 @@ set(CASSIE_KERNEL_SOURCES
 )
 list(TRANSFORM CASSIE_KERNEL_SOURCES PREPEND "${CASSIE_SRC}/")
 
+# The CASSIE graph port: plain C++, no godot-lite prelude.
+set(CASSIE_GRAPH_PORT_SOURCES
+	graph_port/cassie_graph_port.cpp
+	graph_port/session_replay.cpp
+)
+list(TRANSFORM CASSIE_GRAPH_PORT_SOURCES PREPEND "${CASSIE_SRC}/")
+
 # Geogram-backed 2D Delaunay (Godot-free after the rewrite); DMWT.cpp is its
 # only caller, so it builds with mwt.
 set(CASSIE_DELAUNAY_SOURCES "${CASSIE_SRC}/delaunay_geogram.cpp")
