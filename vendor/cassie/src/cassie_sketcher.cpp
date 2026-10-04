@@ -33,6 +33,7 @@
 #include "cassie_stroke_packet.h"
 #include "constraints/cassie_intersection_constraint.h"
 #include "constraints/cassie_intersection_finder.h"
+#include "curves/cassie_curve_fit.h"
 
 #include "core/object/class_db.h"
 
@@ -156,91 +157,97 @@ Dictionary CassieSketcher::_run_chain_locally(
 			real_t(0.001));
 	TypedArray<CassieIntersectionConstraint> detected =
 			solved.get("detected_intersections", Variant());
-	for (int i = 0; i < detected.size(); ++i) {
-		Ref<CassieIntersectionConstraint> ic = detected[i];
-		if (ic.is_null()) {
-			continue;
-		}
-		Ref<CassieFinalStroke> old_stroke = ic->get_intersected_stroke();
-		if (old_stroke.is_null()) {
-			continue;
-		}
-		int found = -1;
-		for (int j = 0; j < committed_strokes.size(); ++j) {
-			Ref<CassieFinalStroke> existing = committed_strokes[j];
-			if (existing == old_stroke) {
-				found = j;
-				break;
-			}
-		}
-		if (found < 0) {
-			continue;
-		}
-		TypedArray<CassieIntersectionConstraint> single;
-		single.push_back(ic);
-		TypedArray<CassieFinalStroke> pieces =
-				cassie_split_stroke_at_constraints(old_stroke, single, snap_threshold);
-		committed_strokes.remove_at(found);
-		for (int k = 0; k < pieces.size(); ++k) {
-			committed_strokes.push_back(pieces[k]);
-		}
-	}
-
-	const bool is_closed = bool(solved.get("is_closed_loop", false));
 	Ref<CassieFinalStroke> new_stroke;
 	new_stroke.instantiate();
-	new_stroke->set_curve(solved_curve, is_closed);
 	new_stroke->set_input_samples(p_input->get_points());
-	committed_strokes.push_back(new_stroke);
-
-	// Refresh the context for subsequent strokes' Beautify passes.
-	sketch_context->set_existing_strokes(committed_strokes);
-
-	// Push the new stroke into the planar sketch graph (per-edge), then
-	// run the reactive patch lifecycle.
-	PackedVector3Array points;
-	const int baked_steps = 32;
-	const real_t baked_len = solved_curve->get_baked_length();
-	if (baked_len > 0.0) {
-		for (int s = 0; s <= baked_steps; ++s) {
-			const real_t t = real_t(s) / real_t(baked_steps);
-			points.push_back(solved_curve->sample_baked(t * baked_len));
-		}
+	if (interval_graph) {
+		new_stroke->set_curve(solved_curve, bool(solved.get("is_closed_loop", false)));
+		_commit_intervals(solved_curve, bool(solved.get("is_closed_loop", false)), detected, p_boundary);
 	} else {
-		for (int s = 0; s < solved_curve->get_point_count(); ++s) {
-			points.push_back(solved_curve->get_point_position(s));
+		for (int i = 0; i < detected.size(); ++i) {
+			Ref<CassieIntersectionConstraint> ic = detected[i];
+			if (ic.is_null()) {
+				continue;
+			}
+			Ref<CassieFinalStroke> old_stroke = ic->get_intersected_stroke();
+			if (old_stroke.is_null()) {
+				continue;
+			}
+			int found = -1;
+			for (int j = 0; j < committed_strokes.size(); ++j) {
+				Ref<CassieFinalStroke> existing = committed_strokes[j];
+				if (existing == old_stroke) {
+					found = j;
+					break;
+				}
+			}
+			if (found < 0) {
+				continue;
+			}
+			TypedArray<CassieIntersectionConstraint> single;
+			single.push_back(ic);
+			TypedArray<CassieFinalStroke> pieces =
+					cassie_split_stroke_at_constraints(old_stroke, single, snap_threshold);
+			committed_strokes.remove_at(found);
+			for (int k = 0; k < pieces.size(); ++k) {
+				committed_strokes.push_back(pieces[k]);
+			}
 		}
-	}
-	PackedVector3Array empty_normals;
-	const real_t graph_proximity = MAX(snap_threshold, sketch_graph->get_merge_epsilon());
-	if (is_closed && split_closed_strokes && points.size() >= 4) {
-		// A closed stroke added whole is one edge from a node back to
-		// itself: no cycle, no patch. Split it at the middle sample into
-		// two half polylines that share both end nodes, so the graph
-		// holds a two-edge cycle the patch lifecycle can triangulate.
-		// The second half ends exactly on the first sample so the two
-		// halves meet in one node whatever the baked end point is.
-		const int mid = points.size() / 2;
-		PackedVector3Array first_half;
-		PackedVector3Array second_half;
-		for (int s = 0; s <= mid; ++s) {
-			first_half.push_back(points[s]);
-		}
-		for (int s = mid; s < points.size() - 1; ++s) {
-			second_half.push_back(points[s]);
-		}
-		second_half.push_back(points[0]);
-		sketch_graph->add_stroke_intersecting(first_half, empty_normals, graph_proximity, p_boundary);
-		sketch_graph->add_stroke_intersecting(second_half, empty_normals, graph_proximity, p_boundary);
-	} else if (points.size() >= 2) {
-		// Parallel-commit finalize (RFD 2274/2119): crossings supplied by the
-		// collision guest split the stroke; empty falls back to solving them
-		// here, which is the predicted-points path when the guest misses budget.
-		if (!p_crossings.is_empty()) {
-			sketch_graph->add_stroke_with_splits(points, empty_normals, p_crossings, graph_proximity, p_boundary);
+
+		const bool is_closed = bool(solved.get("is_closed_loop", false));
+		new_stroke->set_curve(solved_curve, is_closed);
+		committed_strokes.push_back(new_stroke);
+
+		// Refresh the context for subsequent strokes' Beautify passes.
+		sketch_context->set_existing_strokes(committed_strokes);
+
+		// Push the new stroke into the planar sketch graph (per-edge), then
+		// run the reactive patch lifecycle.
+		PackedVector3Array points;
+		const int baked_steps = 32;
+		const real_t baked_len = solved_curve->get_baked_length();
+		if (baked_len > 0.0) {
+			for (int s = 0; s <= baked_steps; ++s) {
+				const real_t t = real_t(s) / real_t(baked_steps);
+				points.push_back(solved_curve->sample_baked(t * baked_len));
+			}
 		} else {
-			sketch_graph->add_stroke_intersecting(points, empty_normals, graph_proximity, p_boundary);
+			for (int s = 0; s < solved_curve->get_point_count(); ++s) {
+				points.push_back(solved_curve->get_point_position(s));
+			}
 		}
+		PackedVector3Array empty_normals;
+		const real_t graph_proximity = MAX(snap_threshold, sketch_graph->get_merge_epsilon());
+		if (is_closed && split_closed_strokes && points.size() >= 4) {
+			// A closed stroke added whole is one edge from a node back to
+			// itself: no cycle, no patch. Split it at the middle sample into
+			// two half polylines that share both end nodes, so the graph
+			// holds a two-edge cycle the patch lifecycle can triangulate.
+			// The second half ends exactly on the first sample so the two
+			// halves meet in one node whatever the baked end point is.
+			const int mid = points.size() / 2;
+			PackedVector3Array first_half;
+			PackedVector3Array second_half;
+			for (int s = 0; s <= mid; ++s) {
+				first_half.push_back(points[s]);
+			}
+			for (int s = mid; s < points.size() - 1; ++s) {
+				second_half.push_back(points[s]);
+			}
+			second_half.push_back(points[0]);
+			sketch_graph->add_stroke_intersecting(first_half, empty_normals, graph_proximity, p_boundary);
+			sketch_graph->add_stroke_intersecting(second_half, empty_normals, graph_proximity, p_boundary);
+		} else if (points.size() >= 2) {
+			// Parallel-commit finalize (RFD 2274/2119): crossings supplied by the
+			// collision guest split the stroke; empty falls back to solving them
+			// here, which is the predicted-points path when the guest misses budget.
+			if (!p_crossings.is_empty()) {
+				sketch_graph->add_stroke_with_splits(points, empty_normals, p_crossings, graph_proximity, p_boundary);
+			} else {
+				sketch_graph->add_stroke_intersecting(points, empty_normals, graph_proximity, p_boundary);
+			}
+		}
+
 	}
 
 	const Dictionary patch_update = surface_manager->update();
@@ -264,6 +271,173 @@ Dictionary CassieSketcher::_run_chain_locally(
 		}
 	}
 	return result;
+}
+
+static PackedVector3Array _sample_piece(const Ref<Curve3D> &p_curve, int p_steps) {
+	PackedVector3Array points;
+	const real_t len = p_curve->get_baked_length();
+	if (len > 0.0) {
+		for (int s = 0; s <= p_steps; ++s) {
+			points.push_back(p_curve->sample_baked(len * real_t(s) / real_t(p_steps)));
+		}
+	} else {
+		for (int s = 0; s < p_curve->get_point_count(); ++s) {
+			points.push_back(p_curve->get_point_position(s));
+		}
+	}
+	return points;
+}
+
+static uint64_t _piece_key(const Ref<CassieFinalStroke> &p_piece) {
+	return uint64_t(uintptr_t(p_piece.ptr()));
+}
+
+// The stroke is the interval [0, L] in arc length. Each detected intersection
+// is an event at new_curve_offset naming the committed piece it lands on and
+// the old_curve_offset there; the piece's edge is split at that offset unless
+// it falls on the piece's end, whose node it then shares. Walking the events
+// in order, each gap between consecutive event nodes becomes one edge.
+void CassieSketcher::_commit_intervals(const Ref<Curve3D> &p_curve, bool p_closed,
+		const TypedArray<CassieIntersectionConstraint> &p_detected, bool p_boundary) {
+	struct Event {
+		real_t t;
+		int node;
+	};
+	struct Split {
+		uint64_t key;
+		Ref<CassieFinalStroke> first;
+		Ref<CassieFinalStroke> second;
+		real_t cut;
+	};
+	LocalVector<Event> events;
+	LocalVector<Split> splits;
+	const real_t length = p_curve->get_baked_length();
+	if (length <= 0.0) {
+		interval_misses++;
+		return;
+	}
+	for (int i = 0; i < p_detected.size(); ++i) {
+		Ref<CassieIntersectionConstraint> ic = p_detected[i];
+		if (ic.is_null() || ic->get_intersected_stroke().is_null()) {
+			continue;
+		}
+		Ref<CassieFinalStroke> old_piece = ic->get_intersected_stroke();
+		real_t off = ic->get_old_curve_offset();
+		for (bool moved = true; moved;) {
+			moved = false;
+			for (uint32_t k = 0; k < splits.size(); ++k) {
+				if (splits[k].key == _piece_key(old_piece)) {
+					if (off < splits[k].cut) {
+						old_piece = splits[k].first;
+					} else {
+						old_piece = splits[k].second;
+						off -= splits[k].cut;
+					}
+					moved = true;
+					break;
+				}
+			}
+		}
+		HashMap<uint64_t, int>::Iterator pe = piece_edge.find(_piece_key(old_piece));
+		int found = -1;
+		for (int j = 0; j < committed_strokes.size(); ++j) {
+			if (Ref<CassieFinalStroke>(committed_strokes[j]) == old_piece) {
+				found = j;
+				break;
+			}
+		}
+		if (!pe || found < 0) {
+			interval_misses++;
+			continue;
+		}
+		const int old_edge = pe->value;
+		const int node_a = sketch_graph->get_edge_node(old_edge, 0);
+		const int node_b = sketch_graph->get_edge_node(old_edge, 1);
+		const real_t old_len = old_piece->get_curve()->get_baked_length();
+		int node = -1;
+		if (ic->get_is_at_node() || off <= 0.0 || off >= old_len) {
+			node = off * 2.0 < old_len ? node_a : node_b;
+		} else {
+			TypedArray<CassieIntersectionConstraint> single;
+			single.push_back(ic);
+			TypedArray<CassieFinalStroke> pieces = cassie_split_stroke_at_constraints(old_piece, single, 0.0);
+			if (pieces.size() != 2) {
+				node = off * 2.0 < old_len ? node_a : node_b;
+			} else {
+				const bool boundary = sketch_graph->get_edge(old_edge)->get_boundary();
+				node = sketch_graph->create_node(ic->get_old_curve_position());
+				sketch_graph->remove_edge(old_edge);
+				piece_edge.remove(pe);
+				committed_strokes.remove_at(found);
+				splits.push_back({ _piece_key(old_piece), pieces[0], pieces[1],
+						Ref<CassieFinalStroke>(pieces[0])->get_curve()->get_baked_length() });
+				const int ends[3] = { node_a, node, node_b };
+				for (int k = 0; k < 2; ++k) {
+					const Ref<CassieFinalStroke> piece = pieces[k];
+					PackedVector3Array pts = _sample_piece(piece->get_curve(), 16);
+					const int eid = sketch_graph->add_edge_between(pts, ends[k], ends[k + 1], boundary);
+					committed_strokes.push_back(piece);
+					piece_edge.insert(_piece_key(piece), eid);
+				}
+			}
+		}
+		events.push_back({ CLAMP(ic->get_new_curve_offset(), real_t(0.0), length), node });
+	}
+	for (uint32_t a = 1; a < events.size(); ++a) {
+		for (uint32_t b = a; b > 0 && events[b].t < events[b - 1].t; --b) {
+			const Event tmp = events[b];
+			events[b] = events[b - 1];
+			events[b - 1] = tmp;
+		}
+	}
+
+	const int start = (!events.is_empty() && events[0].t <= 0.0)
+			? events[0].node
+			: sketch_graph->create_node(p_curve->sample_baked(0.0));
+	int end = (!events.is_empty() && events[events.size() - 1].t >= length)
+			? events[events.size() - 1].node
+			: -1;
+	if (p_closed) {
+		end = start;
+	} else if (end < 0) {
+		end = sketch_graph->create_node(p_curve->sample_baked(length));
+	}
+	LocalVector<Event> cuts;
+	for (uint32_t i = 0; i < events.size(); ++i) {
+		const Event &e = events[i];
+		const int prev = cuts.is_empty() ? start : cuts[cuts.size() - 1].node;
+		if (e.t <= 0.0 || e.t >= length || e.node == prev) {
+			continue;
+		}
+		cuts.push_back(e);
+	}
+	if (p_closed && cuts.is_empty() && split_closed_strokes) {
+		cuts.push_back({ length * real_t(0.5), sketch_graph->create_node(p_curve->sample_baked(length * real_t(0.5))) });
+	}
+	PackedFloat32Array params;
+	for (uint32_t i = 0; i < cuts.size(); ++i) {
+		params.push_back(float(cuts[i].t / length));
+	}
+	const Vector<Ref<Curve3D>> curves = cassie_curve_split_for_constraints(p_curve, params, 0.0f);
+	if (curves.size() != int(cuts.size()) + 1) {
+		interval_misses++;
+		return;
+	}
+	int from = start;
+	for (int k = 0; k < curves.size(); ++k) {
+		const int to = k < int(cuts.size()) ? cuts[k].node : end;
+		Ref<CassieFinalStroke> piece;
+		piece.instantiate();
+		piece->set_curve(curves[k], false);
+		const int steps = MAX(4, int(Math::ceil(32.0 * curves[k]->get_baked_length() / length)));
+		const int eid = sketch_graph->add_edge_between(_sample_piece(curves[k], steps), from, to, p_boundary);
+		if (eid >= 0) {
+			committed_strokes.push_back(piece);
+			piece_edge.insert(_piece_key(piece), eid);
+		}
+		from = to;
+	}
+	sketch_context->set_existing_strokes(committed_strokes);
 }
 
 Dictionary CassieSketcher::commit_stroke(int p_stroke_id) {
@@ -355,6 +529,8 @@ void CassieSketcher::clear() {
 	in_flight.clear();
 	last_encoded_packet.clear();
 	committed_strokes.clear();
+	piece_edge.clear();
+	interval_misses = 0;
 	if (sketch_graph.is_valid()) {
 		sketch_graph->clear();
 	}

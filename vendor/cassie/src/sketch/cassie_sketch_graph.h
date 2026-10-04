@@ -222,6 +222,14 @@ public:
 			const PackedVector3Array &p_crossings, real_t p_proximity,
 			bool p_boundary = false);
 
+	// Topology by identity, not distance: a node made here is never merged
+	// with another by position, and an edge joins the two nodes it is given.
+	int create_node(const Vector3 &p_position);
+	int add_edge_between(const PackedVector3Array &p_points, int p_node_a,
+			int p_node_b, bool p_boundary);
+	void remove_edge(int p_edge_id) { _remove_edge(p_edge_id); }
+	int get_edge_node(int p_edge_id, int p_end) const;
+
 	// interactor-dress-on: true when every edge of the cycle is a boundary
 	// edge. Such a cycle bounds an opening of the surface (a skirt's waist
 	// ring drawn as two half rings is a two-edge cycle of boundary edges);

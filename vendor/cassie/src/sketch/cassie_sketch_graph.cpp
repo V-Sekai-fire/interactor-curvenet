@@ -326,6 +326,50 @@ int CassieSketchGraph::add_stroke(const PackedVector3Array &p_points,
 	return eid;
 }
 
+int CassieSketchGraph::create_node(const Vector3 &p_position) {
+	const int id = next_node_id++;
+	Ref<CassieSketchGraphNode> node;
+	node.instantiate();
+	node->set_id(id);
+	node->set_position(p_position);
+	node->set_normal(Vector3(0, 1, 0));
+	nodes.insert(id, node);
+	return id;
+}
+
+int CassieSketchGraph::add_edge_between(const PackedVector3Array &p_points,
+		int p_node_a, int p_node_b, bool p_boundary) {
+	if (p_points.size() < 2 || !nodes.has(p_node_a) || !nodes.has(p_node_b)) {
+		return -1;
+	}
+	const int eid = next_edge_id++;
+	Ref<CassieSketchGraphEdge> edge;
+	edge.instantiate();
+	edge->set_id(eid);
+	edge->set_points(p_points);
+	edge->set_node_a_id(p_node_a);
+	edge->set_node_b_id(p_node_b);
+	edge->set_boundary(p_boundary);
+	edges.insert(eid, edge);
+	nodes[p_node_a]->add_edge_id(eid);
+	if (p_node_b != p_node_a) {
+		nodes[p_node_b]->add_edge_id(eid);
+	}
+	_update_node_sharpness(p_node_a);
+	_update_node_sharpness(p_node_b);
+	_update_node_normal(p_node_a);
+	_update_node_normal(p_node_b);
+	return eid;
+}
+
+int CassieSketchGraph::get_edge_node(int p_edge_id, int p_end) const {
+	HashMap<int, Ref<CassieSketchGraphEdge>>::ConstIterator it = edges.find(p_edge_id);
+	if (!it) {
+		return -1;
+	}
+	return p_end == 0 ? it->value->get_node_a_id() : it->value->get_node_b_id();
+}
+
 void CassieSketchGraph::_remove_edge(int p_edge_id) {
 	HashMap<int, Ref<CassieSketchGraphEdge>>::Iterator it = edges.find(p_edge_id);
 	if (!it) {

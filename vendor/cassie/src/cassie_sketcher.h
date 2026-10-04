@@ -32,6 +32,7 @@
 
 #include "cassie_beautifier.h"
 #include "cassie_beautifier_params.h"
+#include "constraints/cassie_intersection_constraint.h"
 #include "sketch/cassie_final_stroke.h"
 #include "sketch/cassie_input_stroke.h"
 #include "sketch/cassie_sketch_graph.h"
@@ -105,6 +106,15 @@ class CassieSketcher : public Node3D {
 	bool boundary_strokes = false;
 	uint16_t broadcast_seq = 0;
 
+	// Interval graph: each committed piece is one graph edge, keyed by the
+	// piece's address, and the beautifier's intersections are the only junctions.
+	bool interval_graph = false;
+	HashMap<uint64_t, int> piece_edge;
+	int interval_misses = 0;
+
+	void _commit_intervals(const Ref<Curve3D> &p_curve, bool p_closed,
+			const TypedArray<CassieIntersectionConstraint> &p_detected, bool p_boundary);
+
 	// Last encoded packet, keyed by stroke_id. Kept so the
 	// caller can pull bytes for fabric broadcast after commit. Cleared
 	// when the stroke_id is committed and broadcast.
@@ -142,6 +152,10 @@ public:
 
 	void set_boundary_strokes(bool p_enable) { boundary_strokes = p_enable; }
 	bool get_boundary_strokes() const { return boundary_strokes; }
+
+	void set_interval_graph(bool p_enable) { interval_graph = p_enable; }
+	bool get_interval_graph() const { return interval_graph; }
+	int get_interval_misses() const { return interval_misses; }
 
 	Ref<CassieSketchGraph> get_sketch_graph() const { return sketch_graph; }
 	Ref<CassieSurfaceManager> get_surface_manager() const { return surface_manager; }

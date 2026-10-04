@@ -41,6 +41,7 @@ struct Params {
 	double mirror = 0;
 	double boundary = 0;
 	double thickness = 0.002;
+	double intervals = 0;
 };
 
 struct SketcherDeleter {
@@ -76,6 +77,7 @@ CassieSketcher *sketcher() {
 	CassieSketcher *sk = g_sk.get();
 	sk->set_split_closed_strokes(g_p.split_closed != 0);
 	sk->set_boundary_strokes(g_p.boundary != 0);
+	sk->set_interval_graph(g_p.intervals != 0);
 	sk->get_sketch_graph()->set_merge_epsilon(real_t(g_p.merge_eps));
 	sk->get_surface_manager()->set_target_edge_length(real_t(g_p.target_edge_length));
 	Ref<CassieSketchContext> ctx = sk->get_sketch_context();
@@ -234,10 +236,12 @@ std::string set_param(const std::string &name, double value) {
 			slot = &g_p.boundary;
 		} else if (name == "thickness") {
 			slot = &g_p.thickness;
+		} else if (name == "intervals") {
+			slot = &g_p.intervals;
 		}
 		if (slot == nullptr) {
 			return fail("unknown param '" + name +
-					"' (snap_radius, surface_offset, target_edge_length, split_closed, merge_eps, mirror, boundary, thickness)");
+					"' (snap_radius, surface_offset, target_edge_length, split_closed, merge_eps, mirror, boundary, thickness, intervals)");
 		}
 		if (!std::isfinite(value)) {
 			return fail(name + " must be finite");
@@ -265,6 +269,8 @@ double get_param(const std::string &name) {
 		return g_p.boundary;
 	} else if (name == "thickness") {
 		return g_p.thickness;
+	} else if (name == "intervals") {
+		return g_p.intervals;
 	}
 	return NAN;
 }
@@ -317,11 +323,11 @@ static std::string _commit_report(CassieSketcher *sk, const Dictionary &r) {
 	for (int i = 0; i < cycles.size(); ++i) {
 		(g->is_opening(cycles[i]) ? g_counts.openings : g_counts.cycles) += 1;
 	}
-	return fmt("ok=%d valid=%d closed=%d new_patches=%d patches=%d edges=%d nodes=%d cycles=%d openings=%d",
+	return fmt("ok=%d valid=%d closed=%d new_patches=%d patches=%d edges=%d nodes=%d cycles=%d openings=%d interval_misses=%d",
 			int(bool(r.get("ok", false))), int(bool(r.get("is_valid", false))),
 			int(fs.is_valid() && fs->is_closed_loop()), int(np.size()),
 			sk->get_surface_manager()->get_patch_count(), g_counts.edges, g_counts.nodes, g_counts.cycles,
-			g_counts.openings);
+			g_counts.openings, sk->get_interval_misses());
 }
 
 std::string pen_end(int id) {
