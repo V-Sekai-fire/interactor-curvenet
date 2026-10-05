@@ -288,6 +288,11 @@ std::string FormatSessionResult(const SessionResult &p_result) {
 	std::snprintf(buf, sizeof(buf), " unresolved=%d seams=%d on_mirror=%d user_fallbacks=%d missing_patch_deletes=%d exceptions=%d\n",
 			s.unresolved_constraints, s.mirror_seam_constraints, s.on_mirror_strokes, s.user_fallbacks, s.missing_patch_deletes, s.caught_exceptions);
 	out += buf;
+	int broken = 0;
+	for (const CycleBoundary &b : p_result.boundaries) {
+		broken += b.broken_walk ? 1 : 0;
+	}
+	out.insert(out.size() - 1, " broken_walks=" + std::to_string(broken));
 	for (size_t i = 0; i < p_result.cycles.size(); i++) {
 		const std::vector<int> &c = p_result.cycles[i];
 		for (size_t k = 0; k < c.size(); k++) {

@@ -72,6 +72,7 @@ struct CycleBoundary {
 	std::vector<int> strokes; // sorted, unique
 	std::vector<BoundarySpan> spans; // the cycle's half-segments, in order
 	bool user_created = false;
+	bool broken_walk = false; // the segments do not chain node to node
 };
 
 class Replay {

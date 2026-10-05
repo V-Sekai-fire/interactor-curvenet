@@ -2041,22 +2041,39 @@ std::vector<CycleBoundary> Replay::Boundaries(bool p_include_user) const {
 		b.strokes = c->StrokeIDs();
 		std::sort(b.strokes.begin(), b.strokes.end());
 		b.strokes.erase(std::unique(b.strokes.begin(), b.strokes.end()), b.strokes.end());
-		// Each half-segment is walked toward the node it shares with the next one.
+		// The half-segment list is not a walk after repairs; walk the segments by their nodes.
 		std::vector<const Segment *> segs;
 		for (const HalfSegment &hs : c->HalfSegments) {
 			segs.push_back(hs.segment);
 		}
-		for (size_t i = 0; i < segs.size(); i++) {
-			const Segment *s = segs[i];
-			const Segment *next = segs[(i + 1) % segs.size()];
-			bool toward_start = s->GetStartNode() != s->GetEndNode() && (s->GetStartNode() == next->GetStartNode() || s->GetStartNode() == next->GetEndNode());
+		std::vector<bool> used(segs.size(), false);
+		const Node *at = segs.empty() ? nullptr : segs[0]->GetStartNode();
+		for (size_t step = 0; step < segs.size(); step++) {
+			size_t pick = segs.size();
+			for (size_t i = 0; i < segs.size() && pick == segs.size(); i++) {
+				if (!used[i] && (segs[i]->GetStartNode() == at || segs[i]->GetEndNode() == at)) {
+					pick = i;
+				}
+			}
+			if (pick == segs.size()) {
+				b.broken_walk = true;
+				for (size_t i = 0; i < segs.size() && pick == segs.size(); i++) {
+					if (!used[i]) {
+						pick = i;
+					}
+				}
+			}
+			used[pick] = true;
+			const Segment *s = segs[pick];
+			bool forward = s->GetStartNode() == at || pick == segs.size();
 			BoundarySpan sp;
 			sp.stroke = s->Stroke->ID;
 			double t0 = to_double(s->GetStartParam());
 			double t1 = to_double(s->GetEndParam());
-			sp.t_from = toward_start ? t1 : t0;
-			sp.t_to = toward_start ? t0 : t1;
+			sp.t_from = forward ? t0 : t1;
+			sp.t_to = forward ? t1 : t0;
 			b.spans.push_back(sp);
+			at = forward ? s->GetEndNode() : s->GetStartNode();
 		}
 		out.push_back(b);
 	}
