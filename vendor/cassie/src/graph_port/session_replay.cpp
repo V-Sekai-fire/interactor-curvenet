@@ -158,6 +158,31 @@ WorldPoint Point(const Json &j) {
 	return w;
 }
 
+// Transform.InverseTransformPoint of the canvas the state logged: q^-1 (p - t) / s.
+bool CanvasPoint(const Json &st, WorldPoint &r_local) {
+	const Json &h = st["primaryHandPos"];
+	const Json &t = st["canvasPos"];
+	const Json &q = st["canvasRot"];
+	if (h.kind != Json::OBJ || t.kind != Json::OBJ || q.kind != Json::OBJ || st["canvasScale"].kind != Json::NUM) {
+		return false;
+	}
+	double vx = h["x"].num - t["x"].num;
+	double vy = h["y"].num - t["y"].num;
+	double vz = h["z"].num - t["z"].num;
+	double qx = -q["x"].num;
+	double qy = -q["y"].num;
+	double qz = -q["z"].num;
+	double qw = q["w"].num;
+	double tx = 2.0 * (qy * vz - qz * vy);
+	double ty = 2.0 * (qz * vx - qx * vz);
+	double tz = 2.0 * (qx * vy - qy * vx);
+	double s = st["canvasScale"].num;
+	r_local.x = (vx + qw * tx + (qy * tz - qz * ty)) / s;
+	r_local.y = (vy + qw * ty + (qz * tx - qx * tz)) / s;
+	r_local.z = (vz + qw * tz + (qx * ty - qy * tx)) / s;
+	return true;
+}
+
 void Run(const Json &root, bool p_trace, SessionResult &r) {
 	std::map<int, const Json *> by_id;
 	for (const Json &s : root["allSketchedStrokes"].arr) {
@@ -199,7 +224,12 @@ void Run(const Json &root, bool p_trace, SessionResult &r) {
 				grp.push_back(patches[(int)states[next]["elementID"].num]);
 				next++;
 			}
-			replay.AddUserPatches(grp);
+			WorldPoint tap;
+			if (!CanvasPoint(st, tap)) {
+				r.error = "tapped patch " + std::to_string(id) + " has no primaryHandPos and canvas transform";
+				return;
+			}
+			replay.AddUserPatches(grp, tap, mirroring);
 		} else if (type == 4) {
 			replay.DeletePatch(id);
 		} else if (type == 1 || type == 2) {
@@ -285,8 +315,8 @@ std::string FormatSessionResult(const SessionResult &p_result) {
 	std::string out = "ok cycles=" + std::to_string(p_result.cycles.size()) + " user=" + std::to_string(p_result.user_cycles);
 	const ReplayStats &s = p_result.stats;
 	char buf[192];
-	std::snprintf(buf, sizeof(buf), " unresolved=%d seams=%d on_mirror=%d user_fallbacks=%d missing_patch_deletes=%d exceptions=%d\n",
-			s.unresolved_constraints, s.mirror_seam_constraints, s.on_mirror_strokes, s.user_fallbacks, s.missing_patch_deletes, s.caught_exceptions);
+	std::snprintf(buf, sizeof(buf), " unresolved=%d seams=%d on_mirror=%d tap_misses=%d missing_patch_deletes=%d exceptions=%d\n",
+			s.unresolved_constraints, s.mirror_seam_constraints, s.on_mirror_strokes, s.tap_misses, s.missing_patch_deletes, s.caught_exceptions);
 	out += buf;
 	int broken = 0;
 	for (const CycleBoundary &b : p_result.boundaries) {

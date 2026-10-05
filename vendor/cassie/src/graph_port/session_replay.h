@@ -49,7 +49,8 @@ struct SessionResult {
 };
 
 // p_json is a CASSIE session export, or its compact subset: systemStates
-// (interactionType, elementID, mirroring, canvasScale, time), allSketchedStrokes
+// (interactionType, elementID, mirroring, canvasScale, time; a tapped patch adds
+// primaryHandPos, canvasPos, canvasRot), allSketchedStrokes
 // (id, ctrlPts, appliedPositionConstraints, rejectedPositionConstraints,
 // closedLoop) and allCreatedPatches (id, foundByAlgo, strokesID).
 SessionResult ReplaySession(const std::string &p_json, bool p_trace);
