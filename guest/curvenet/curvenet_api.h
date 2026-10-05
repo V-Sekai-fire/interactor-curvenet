@@ -80,6 +80,21 @@ std::vector<int32_t> mesh_rims();
 // it came from; after a remesh, the patch nearest its centroid.
 std::vector<int32_t> mesh_patch_ids();
 
+// Replays a CASSIE session (graph_port/session_replay.h) through the graph port:
+// "ok cycles=N user=M ..." then one sorted stroke-id line per algorithm cycle.
+std::string session_replay(const std::string &json);
+// Triangulates each boundary (counts[i] points of xyz) with CassieTriangulator and keeps
+// the patches; mesh_build then merges these instead of the surface manager's.
+// remesh_edge_length > 0 remeshes each patch on its own, its boundary held.
+std::string boundary_patches(const std::vector<float> &points_xyz, const std::vector<int32_t> &counts, double target_edge_length,
+		double remesh_edge_length);
+// The kept patches, flat; parts_counts is (vertex count, index count) per patch.
+std::vector<float> parts_vertices();
+std::vector<int32_t> parts_triangles();
+std::vector<int32_t> parts_counts();
+// Replaces the kept patches with patches made elsewhere (another sandbox's parts_*).
+std::string set_parts(const std::vector<float> &vertices, const std::vector<int32_t> &triangles, const std::vector<int32_t> &counts);
+
 // --- checks (checks.cpp) ------------------------------------------------------
 // One line per check:
 //   "PASS <name> ints=a,b,c fsig=<12 hex>/<count> :: <detail>"

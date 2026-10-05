@@ -4,6 +4,7 @@
 #include "curvenet_api.h"
 
 #include "cassie_sketcher.h"
+#include "cassie_triangulator.h"
 #include "curves/cassie_curve_fit.h"
 #include "sketch/cassie_curvenet.h"
 #include "sketch/cassie_curvenet_extractor.h"
@@ -15,6 +16,7 @@
 #include "scene/resources/mesh.h"
 
 #include "common/mesh_wire.h"
+#include "graph_port/session_replay.h"
 
 #include <pmp/algorithms/remeshing.h>
 #include <pmp/surface_mesh.h>
@@ -52,6 +54,9 @@ std::unique_ptr<CassieSketcher, SketcherDeleter> g_sk;
 Ref<CassieSurfacePatch> g_body;
 Ref<CassieCurvenet> g_cn;
 BuiltMesh g_mesh;
+// Patches triangulated from host-built cycle boundaries; when present, mesh_build uses these.
+std::vector<std::vector<float>> g_boundary_pv;
+std::vector<std::vector<int32_t>> g_boundary_pf;
 Counts g_counts;
 
 std::string fmt(const char *f, ...) __attribute__((format(printf, 1, 2)));
@@ -210,6 +215,8 @@ std::string reset() {
 		g_cn.unref();
 		g_mesh = BuiltMesh();
 		g_counts = Counts();
+		g_boundary_pv.clear();
+		g_boundary_pf.clear();
 		sketcher();
 		return std::string("ok");
 	});
@@ -701,6 +708,41 @@ std::vector<int32_t> nearest_patch_ids(const std::vector<float> &in_v, const std
 	return out;
 }
 
+// Remeshes one patch with its boundary locked, so patches remeshed apart still share their seams.
+bool remesh_part(std::vector<float> &v, std::vector<int32_t> &f, double target, std::string &err) {
+	pmp::SurfaceMesh mesh;
+	std::vector<pmp::Vertex> vh(v.size() / 3);
+	for (size_t i = 0; i < vh.size(); ++i) {
+		vh[i] = mesh.add_vertex(pmp::Point(v[3 * i], v[3 * i + 1], v[3 * i + 2]));
+	}
+	for (size_t t = 0; t + 2 < f.size(); t += 3) {
+		mesh.add_triangle(vh[size_t(f[t])], vh[size_t(f[t + 1])], vh[size_t(f[t + 2])]);
+	}
+	pmp::VertexProperty<bool> selected = mesh.vertex_property<bool>("v:selected", false);
+	for (pmp::Vertex q : mesh.vertices()) {
+		selected[q] = !mesh.is_boundary(q);
+	}
+	try {
+		pmp::uniform_remeshing(mesh, pmp::Scalar(target), 10, true);
+	} catch (const std::exception &e) {
+		err = std::string("uniform_remeshing: ") + e.what();
+		return false;
+	}
+	mesh.garbage_collection();
+	v.clear();
+	f.clear();
+	for (pmp::Vertex q : mesh.vertices()) {
+		const pmp::Point p = mesh.position(q);
+		v.insert(v.end(), { float(p[0]), float(p[1]), float(p[2]) });
+	}
+	for (pmp::Face t : mesh.faces()) {
+		for (pmp::Vertex q : mesh.vertices(t)) {
+			f.push_back(int32_t(q.idx()));
+		}
+	}
+	return true;
+}
+
 bool remesh(BuiltMesh &m, double target, std::string &err) {
 	pmp::SurfaceMesh mesh;
 	const size_t nv = m.vertices.size() / 3;
@@ -866,11 +908,106 @@ BuiltMesh build_mesh(const std::vector<std::vector<float>> &part_vertices,
 	return m;
 }
 
+std::string boundary_patches(const std::vector<float> &points_xyz, const std::vector<int32_t> &counts, double target_edge_length,
+		double remesh_edge_length) {
+	return guarded([&] {
+		size_t at = 0;
+		int made = 0, failed = 0, triangles = 0;
+		std::string failed_at;
+		for (const int32_t &n : counts) {
+			if (n < 0 || at + size_t(n) * 3 > points_xyz.size()) {
+				return fail("boundary counts overrun the points");
+			}
+			PackedVector3Array boundary;
+			boundary.resize(n);
+			for (int32_t i = 0; i < n; ++i) {
+				boundary.write[i] = Vector3(points_xyz[at + 3 * i], points_xyz[at + 3 * i + 1], points_xyz[at + 3 * i + 2]);
+			}
+			at += size_t(n) * 3;
+			const Dictionary tri = n >= 3 ? CassieTriangulator::triangulate(boundary, float(target_edge_length)) : Dictionary();
+			const PackedVector3Array tv = tri.get("vertices", PackedVector3Array());
+			const PackedInt32Array tf = tri.get("faces", PackedInt32Array());
+			if (!bool(tri.get("success", false)) || tf.size() < 3) {
+				failed_at += (failed_at.empty() ? "" : ",") + std::to_string(int(&n - counts.data()));
+				failed++;
+				continue;
+			}
+			std::vector<float> v;
+			std::vector<int32_t> f;
+			for (int i = 0; i < tv.size(); ++i) {
+				v.insert(v.end(), { float(tv[i].x), float(tv[i].y), float(tv[i].z) });
+			}
+			for (int i = 0; i < tf.size(); ++i) {
+				f.push_back(tf[i]);
+			}
+			if (outward_sign(v, f) < 0) {
+				for (size_t t = 0; t + 2 < f.size(); t += 3) {
+					std::swap(f[t + 1], f[t + 2]);
+				}
+			}
+			if (remesh_edge_length > 0) {
+				std::string err;
+				if (!remesh_part(v, f, remesh_edge_length, err)) {
+					return fail(err);
+				}
+			}
+			triangles += int(f.size() / 3);
+			g_boundary_pv.push_back(std::move(v));
+			g_boundary_pf.push_back(std::move(f));
+			made++;
+		}
+		return fmt("ok patches=%d failed=%d triangles=%d total=%d failed_at=%s", made, failed, triangles, int(g_boundary_pv.size()),
+				failed_at.empty() ? "-" : failed_at.c_str());
+	});
+}
+
+std::vector<float> parts_vertices() {
+	std::vector<float> out;
+	for (const std::vector<float> &v : g_boundary_pv) {
+		out.insert(out.end(), v.begin(), v.end());
+	}
+	return out;
+}
+
+std::vector<int32_t> parts_triangles() {
+	std::vector<int32_t> out;
+	for (const std::vector<int32_t> &f : g_boundary_pf) {
+		out.insert(out.end(), f.begin(), f.end());
+	}
+	return out;
+}
+
+std::vector<int32_t> parts_counts() {
+	std::vector<int32_t> out;
+	for (size_t i = 0; i < g_boundary_pv.size(); ++i) {
+		out.push_back(int32_t(g_boundary_pv[i].size() / 3));
+		out.push_back(int32_t(g_boundary_pf[i].size()));
+	}
+	return out;
+}
+
+std::string set_parts(const std::vector<float> &vertices, const std::vector<int32_t> &triangles, const std::vector<int32_t> &counts) {
+	g_boundary_pv.clear();
+	g_boundary_pf.clear();
+	size_t av = 0, af = 0;
+	for (size_t i = 0; i + 1 < counts.size(); i += 2) {
+		const size_t nv = size_t(counts[i]) * 3, nf = size_t(counts[i + 1]);
+		if (av + nv > vertices.size() || af + nf > triangles.size()) {
+			return fail("part counts overrun the arrays");
+		}
+		g_boundary_pv.emplace_back(vertices.begin() + long(av), vertices.begin() + long(av + nv));
+		g_boundary_pf.emplace_back(triangles.begin() + long(af), triangles.begin() + long(af + nf));
+		av += nv;
+		af += nf;
+	}
+	return fmt("ok parts=%d", int(g_boundary_pv.size()));
+}
+
 std::string mesh_build(double target_edge_length, double weld_eps) {
 	return guarded([&] {
-		std::vector<std::vector<float>> pv;
-		std::vector<std::vector<int32_t>> pf;
-		for (const Ref<CassieSurfacePatch> &p : active_patches()) {
+		std::vector<std::vector<float>> pv = g_boundary_pv;
+		std::vector<std::vector<int32_t>> pf = g_boundary_pf;
+		for (const Ref<CassieSurfacePatch> &p : g_boundary_pv.empty() ? active_patches() : std::vector<Ref<CassieSurfacePatch>>()) {
 			pv.emplace_back();
 			pf.emplace_back();
 			patch_arrays(p, pv.back(), pf.back());
@@ -925,6 +1062,10 @@ std::vector<float> stroke_samples() {
 		}
 	}
 	return out;
+}
+
+std::string session_replay(const std::string &json) {
+	return cassie_graph_port::FormatSessionResult(cassie_graph_port::ReplaySession(json, false));
 }
 
 } // namespace cn

@@ -88,6 +88,10 @@ target_link_libraries(cassie_core PUBLIC
 	$<TARGET_NAME_IF_EXISTS:godot_lite>
 )
 
+add_library(cassie_graph_port STATIC EXCLUDE_FROM_ALL ${CASSIE_GRAPH_PORT_SOURCES})
+target_include_directories(cassie_graph_port PUBLIC "${CASSIE_SRC}")
+target_compile_options(cassie_graph_port PRIVATE ${CURVENET_STRICT_FP})
+
 # ---- The stage's API and Gate 4's checks ----------------------------------------
 # guest/curvenet/curvenet_api.h is std types only; these two TUs are the only
 # ones that see both it and Cassie (with the godot-lite prelude). The same
@@ -101,7 +105,7 @@ target_compile_options(curvenet_core PRIVATE
 	"SHELL:-include ${GUEST_RUNTIME_ROOT}/guest/godot_lite/gdl_prelude.h"
 	${CURVENET_STRICT_FP}
 )
-target_link_libraries(curvenet_core PUBLIC cassie_core)
+target_link_libraries(curvenet_core PUBLIC cassie_core cassie_graph_port)
 
 # ---- curvenet.elf ----------------------------------------------------------------
 # Only where the sandbox toolchain defined add_stage_elf (CMakeLists.txt); the
