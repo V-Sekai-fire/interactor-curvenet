@@ -29,7 +29,6 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <unordered_map>
 
 namespace cn {
 namespace {
