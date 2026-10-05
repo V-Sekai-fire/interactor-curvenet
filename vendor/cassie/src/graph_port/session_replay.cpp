@@ -183,6 +183,34 @@ bool CanvasPoint(const Json &st, WorldPoint &r_local) {
 	return true;
 }
 
+// StudyUtils.MirrorModelMapping[sketchModel] offset by InputController.OnModelChange's origin, the
+// rig's view point snapped down to 0.25 m. The rig is not logged: the origin per interactionMode is
+// what every session's mirror-plane constraints agree on (study x 0 and z 0.75, free creation x 0.25).
+bool MirrorPlane(const Json &root, WorldPoint &r_point, WorldPoint &r_normal, std::string &r_error) {
+	if (root["sketchModel"].kind != Json::NUM || root["interactionMode"].kind != Json::NUM) {
+		r_error = "session has no sketchModel and interactionMode";
+		return false;
+	}
+	int model = (int)root["sketchModel"].num;
+	int mode = (int)root["interactionMode"].num;
+	static const double kModelPoint[4][3] = { { -0.125, 0.125, 0.125 }, { 0.125, 0.125, 0.0 }, { 0.125, 0.125, 0.0 }, { 0.0, 0.125, 0.125 } };
+	static const double kModelNormal[4][3] = { { 1.0, 0.0, 0.0 }, { 0.0, 0.0, 1.0 }, { 0.0, 0.0, 1.0 }, { 1.0, 0.0, 0.0 } };
+	static const double kStudyOrigin[3] = { 0.0, 1.0, 0.75 };
+	static const double kFreeCreationOrigin[3] = { 0.25, 1.0, 0.75 };
+	if (model < 0 || model > 3 || mode < 0 || mode > 2) {
+		r_error = "session has sketchModel " + std::to_string(model) + ", interactionMode " + std::to_string(mode);
+		return false;
+	}
+	const double *origin = mode == 2 ? kFreeCreationOrigin : kStudyOrigin;
+	r_point.x = kModelPoint[model][0] + origin[0];
+	r_point.y = kModelPoint[model][1] + origin[1];
+	r_point.z = kModelPoint[model][2] + origin[2];
+	r_normal.x = kModelNormal[model][0];
+	r_normal.y = kModelNormal[model][1];
+	r_normal.z = kModelNormal[model][2];
+	return true;
+}
+
 void Run(const Json &root, bool p_trace, SessionResult &r) {
 	std::map<int, const Json *> by_id;
 	for (const Json &s : root["allSketchedStrokes"].arr) {
@@ -200,11 +228,10 @@ void Run(const Json &root, bool p_trace, SessionResult &r) {
 	}
 	WorldPoint origin;
 	WorldPoint mirror_point;
-	mirror_point.x = 0.125;
-	mirror_point.y = 0.125;
-	mirror_point.z = 0.125;
 	WorldPoint mirror_normal;
-	mirror_normal.x = 1.0;
+	if (!MirrorPlane(root, mirror_point, mirror_normal, r.error)) {
+		return;
+	}
 	Replay replay(origin, mirror_point, mirror_normal);
 	// StudyUtils.SketchSystem: 0 Baseline, 1 Snap, 2 SnapSurface.
 	if (root["sketchSystem"].kind != Json::NUM) {

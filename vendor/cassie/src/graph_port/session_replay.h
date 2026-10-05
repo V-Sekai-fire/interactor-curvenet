@@ -54,7 +54,8 @@ struct SessionResult {
 	std::vector<Event> events;
 };
 
-// p_json is a CASSIE session export, or its compact subset: sketchSystem, systemStates
+// p_json is a CASSIE session export, or its compact subset: sketchSystem, sketchModel,
+// interactionMode, systemStates
 // (interactionType, elementID, mirroring, canvasScale, time; a tapped patch adds
 // primaryHandPos, canvasPos, canvasRot), allSketchedStrokes
 // (id, ctrlPts, appliedPositionConstraints, rejectedPositionConstraints,

@@ -1804,7 +1804,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 	Curve new_curve(ctrl);
 	bool on_mirror = true;
 	for (const V3 &p : ctrl) {
-		if (!(Fabs(p.x - m.plane.p0.x) < 1e-6f)) {
+		if (!(Fabs(Dot(m.plane.n, p - m.plane.p0)) < 1e-6f)) {
 			on_mirror = false;
 		}
 	}
@@ -1856,7 +1856,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 			in.old_data = old;
 			in.new_data = item.first;
 			intersections.push_back(in);
-		} else if (std::fabs(to_double(pos.x) - to_double(m.plane.p0.x)) < 1e-5) {
+		} else if (std::fabs(to_double(Dot(m.plane.n, pos - m.plane.p0))) < 1e-5) {
 			seams.push_back(item.first);
 			m.stats.mirror_seam_constraints++;
 		}
