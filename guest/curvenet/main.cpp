@@ -145,8 +145,25 @@ static Variant session_replay(String json) {
 	return text(cn::session_replay(json.utf8()));
 }
 
-static Variant boundary_patches(PackedArray<float> points, PackedArray<int32_t> counts, double target_edge_length) {
-	return text(cn::boundary_patches(points.fetch(), counts.fetch(), target_edge_length));
+static Variant boundary_patches(PackedArray<float> points, PackedArray<int32_t> counts, double target_edge_length,
+		double remesh_edge_length) {
+	return text(cn::boundary_patches(points.fetch(), counts.fetch(), target_edge_length, remesh_edge_length));
+}
+
+static Variant parts_vertices() {
+	return packed(cn::parts_vertices());
+}
+
+static Variant parts_triangles() {
+	return packed(cn::parts_triangles());
+}
+
+static Variant parts_counts() {
+	return packed(cn::parts_counts());
+}
+
+static Variant set_parts(PackedArray<float> vertices, PackedArray<int32_t> triangles, PackedArray<int32_t> counts) {
+	return text(cn::set_parts(vertices.fetch(), triangles.fetch(), counts.fetch()));
 }
 
 // --- checks -------------------------------------------------------------------
@@ -199,8 +216,14 @@ int main() {
 	ADD_API_FUNCTION(mesh_patch_ids, "PackedInt32Array", "", "Source patch per triangle (-1 after a remesh)");
 	ADD_API_FUNCTION(session_replay, "String", "String json",
 			"Replay a CASSIE session through the graph port: ok cycles=N user=M, then a stroke-id line per cycle");
-	ADD_API_FUNCTION(boundary_patches, "String", "PackedFloat32Array points, PackedInt32Array counts, float target_edge_length",
-			"Triangulate closed boundaries (counts[i] xyz points each) into the patches mesh_build merges");
+	ADD_API_FUNCTION(boundary_patches, "String",
+			"PackedFloat32Array points, PackedInt32Array counts, float target_edge_length, float remesh_edge_length",
+			"Triangulate closed boundaries (counts[i] xyz points each), optionally remesh each, into the patches mesh_build merges");
+	ADD_API_FUNCTION(parts_vertices, "PackedFloat32Array", "", "The kept patches' vertices, flat");
+	ADD_API_FUNCTION(parts_triangles, "PackedInt32Array", "", "The kept patches' triangles, each patch's own indices");
+	ADD_API_FUNCTION(parts_counts, "PackedInt32Array", "", "Per kept patch: vertex count, index count");
+	ADD_API_FUNCTION(set_parts, "String", "PackedFloat32Array vertices, PackedInt32Array triangles, PackedInt32Array counts",
+			"Replace the kept patches (parts_* of another sandbox)");
 	ADD_API_FUNCTION(check, "String", "String name", "One Gate 4 check");
 	ADD_API_FUNCTION(check_all, "String", "", "Every Gate 4 check");
 	ADD_API_FUNCTION(check_names, "String", "", "The Gate 4 check names");

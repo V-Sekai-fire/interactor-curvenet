@@ -85,7 +85,15 @@ std::vector<int32_t> mesh_patch_ids();
 std::string session_replay(const std::string &json);
 // Triangulates each boundary (counts[i] points of xyz) with CassieTriangulator and keeps
 // the patches; mesh_build then merges these instead of the surface manager's.
-std::string boundary_patches(const std::vector<float> &points_xyz, const std::vector<int32_t> &counts, double target_edge_length);
+// remesh_edge_length > 0 remeshes each patch on its own, its boundary held.
+std::string boundary_patches(const std::vector<float> &points_xyz, const std::vector<int32_t> &counts, double target_edge_length,
+		double remesh_edge_length);
+// The kept patches, flat; parts_counts is (vertex count, index count) per patch.
+std::vector<float> parts_vertices();
+std::vector<int32_t> parts_triangles();
+std::vector<int32_t> parts_counts();
+// Replaces the kept patches with patches made elsewhere (another sandbox's parts_*).
+std::string set_parts(const std::vector<float> &vertices, const std::vector<int32_t> &triangles, const std::vector<int32_t> &counts);
 
 // --- checks (checks.cpp) ------------------------------------------------------
 // One line per check:

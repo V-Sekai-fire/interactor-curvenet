@@ -708,6 +708,41 @@ std::vector<int32_t> nearest_patch_ids(const std::vector<float> &in_v, const std
 	return out;
 }
 
+// Remeshes one patch with its boundary locked, so patches remeshed apart still share their seams.
+bool remesh_part(std::vector<float> &v, std::vector<int32_t> &f, double target, std::string &err) {
+	pmp::SurfaceMesh mesh;
+	std::vector<pmp::Vertex> vh(v.size() / 3);
+	for (size_t i = 0; i < vh.size(); ++i) {
+		vh[i] = mesh.add_vertex(pmp::Point(v[3 * i], v[3 * i + 1], v[3 * i + 2]));
+	}
+	for (size_t t = 0; t + 2 < f.size(); t += 3) {
+		mesh.add_triangle(vh[size_t(f[t])], vh[size_t(f[t + 1])], vh[size_t(f[t + 2])]);
+	}
+	pmp::VertexProperty<bool> selected = mesh.vertex_property<bool>("v:selected", false);
+	for (pmp::Vertex q : mesh.vertices()) {
+		selected[q] = !mesh.is_boundary(q);
+	}
+	try {
+		pmp::uniform_remeshing(mesh, pmp::Scalar(target), 10, true);
+	} catch (const std::exception &e) {
+		err = std::string("uniform_remeshing: ") + e.what();
+		return false;
+	}
+	mesh.garbage_collection();
+	v.clear();
+	f.clear();
+	for (pmp::Vertex q : mesh.vertices()) {
+		const pmp::Point p = mesh.position(q);
+		v.insert(v.end(), { float(p[0]), float(p[1]), float(p[2]) });
+	}
+	for (pmp::Face t : mesh.faces()) {
+		for (pmp::Vertex q : mesh.vertices(t)) {
+			f.push_back(int32_t(q.idx()));
+		}
+	}
+	return true;
+}
+
 bool remesh(BuiltMesh &m, double target, std::string &err) {
 	pmp::SurfaceMesh mesh;
 	const size_t nv = m.vertices.size() / 3;
@@ -873,7 +908,8 @@ BuiltMesh build_mesh(const std::vector<std::vector<float>> &part_vertices,
 	return m;
 }
 
-std::string boundary_patches(const std::vector<float> &points_xyz, const std::vector<int32_t> &counts, double target_edge_length) {
+std::string boundary_patches(const std::vector<float> &points_xyz, const std::vector<int32_t> &counts, double target_edge_length,
+		double remesh_edge_length) {
 	return guarded([&] {
 		size_t at = 0;
 		int made = 0, failed = 0, triangles = 0;
@@ -909,6 +945,12 @@ std::string boundary_patches(const std::vector<float> &points_xyz, const std::ve
 					std::swap(f[t + 1], f[t + 2]);
 				}
 			}
+			if (remesh_edge_length > 0) {
+				std::string err;
+				if (!remesh_part(v, f, remesh_edge_length, err)) {
+					return fail(err);
+				}
+			}
 			triangles += int(f.size() / 3);
 			g_boundary_pv.push_back(std::move(v));
 			g_boundary_pf.push_back(std::move(f));
@@ -917,6 +959,48 @@ std::string boundary_patches(const std::vector<float> &points_xyz, const std::ve
 		return fmt("ok patches=%d failed=%d triangles=%d total=%d failed_at=%s", made, failed, triangles, int(g_boundary_pv.size()),
 				failed_at.empty() ? "-" : failed_at.c_str());
 	});
+}
+
+std::vector<float> parts_vertices() {
+	std::vector<float> out;
+	for (const std::vector<float> &v : g_boundary_pv) {
+		out.insert(out.end(), v.begin(), v.end());
+	}
+	return out;
+}
+
+std::vector<int32_t> parts_triangles() {
+	std::vector<int32_t> out;
+	for (const std::vector<int32_t> &f : g_boundary_pf) {
+		out.insert(out.end(), f.begin(), f.end());
+	}
+	return out;
+}
+
+std::vector<int32_t> parts_counts() {
+	std::vector<int32_t> out;
+	for (size_t i = 0; i < g_boundary_pv.size(); ++i) {
+		out.push_back(int32_t(g_boundary_pv[i].size() / 3));
+		out.push_back(int32_t(g_boundary_pf[i].size()));
+	}
+	return out;
+}
+
+std::string set_parts(const std::vector<float> &vertices, const std::vector<int32_t> &triangles, const std::vector<int32_t> &counts) {
+	g_boundary_pv.clear();
+	g_boundary_pf.clear();
+	size_t av = 0, af = 0;
+	for (size_t i = 0; i + 1 < counts.size(); i += 2) {
+		const size_t nv = size_t(counts[i]) * 3, nf = size_t(counts[i + 1]);
+		if (av + nv > vertices.size() || af + nf > triangles.size()) {
+			return fail("part counts overrun the arrays");
+		}
+		g_boundary_pv.emplace_back(vertices.begin() + long(av), vertices.begin() + long(av + nv));
+		g_boundary_pf.emplace_back(triangles.begin() + long(af), triangles.begin() + long(af + nf));
+		av += nv;
+		af += nf;
+	}
+	return fmt("ok parts=%d", int(g_boundary_pv.size()));
 }
 
 std::string mesh_build(double target_edge_length, double weld_eps) {
