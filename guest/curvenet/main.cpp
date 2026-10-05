@@ -66,23 +66,6 @@ static Variant pen_end_with_crossings(int id, PackedArray<float> crossings) {
 	return text(cn::pen_end_with_crossings(id, crossings.fetch()));
 }
 
-// End a stroke as recorded, joined only at its recorded junctions (3 floats a point).
-static Variant pen_end_recorded(int id, PackedArray<float> junctions, int source) {
-	return text(cn::pen_end_recorded(id, junctions.fetch(), source));
-}
-
-static Variant mesh_deferred(int max_count) {
-	return cn::mesh_deferred(max_count);
-}
-
-static Variant cycle_sources() {
-	return packed(cn::cycle_sources());
-}
-
-static Variant find_cycles_count() {
-	return cn::find_cycles_count();
-}
-
 // A whole stroke in one call: xyzp holds 4 floats per sample (x, y, z,
 // pressure); answers pen_end's line.
 static Variant pen_stroke(PackedArray<float> xyzp) {
@@ -162,6 +145,10 @@ static Variant session_replay(String json) {
 	return text(cn::session_replay(json.utf8()));
 }
 
+static Variant boundary_patches(PackedArray<float> points, PackedArray<int32_t> counts, double target_edge_length) {
+	return text(cn::boundary_patches(points.fetch(), counts.fetch(), target_edge_length));
+}
+
 // --- checks -------------------------------------------------------------------
 
 static Variant check(String name) {
@@ -193,11 +180,6 @@ int main() {
 			"Commit: ok valid closed new_patches patches edges nodes cycles");
 	ADD_API_FUNCTION(pen_end_with_crossings, "String", "int id, PackedFloat32Array crossings",
 			"End a stroke, splitting at guest-supplied crossings (3 floats a point)");
-	ADD_API_FUNCTION(pen_end_recorded, "String", "int id, PackedFloat32Array junctions, int source",
-			"End a recorded stroke, joined at its recorded junctions (3 floats a point)");
-	ADD_API_FUNCTION(mesh_deferred, "int", "int max_count", "Mesh up to max_count deferred cycles; answers how many are left");
-	ADD_API_FUNCTION(cycle_sources, "PackedInt32Array", "", "Each cycle's edge source strokes, -1000 between cycles");
-	ADD_API_FUNCTION(find_cycles_count, "int", "", "Walk the whole graph once and count its cycles");
 	ADD_API_FUNCTION(pen_stroke, "String", "PackedFloat32Array xyzp", "A whole stroke, 4 floats per sample");
 	ADD_API_FUNCTION(patch_count, "int", "", "Active surface patches");
 	ADD_API_FUNCTION(patch_vertices, "PackedFloat32Array", "int i", "Patch i's vertices (mesh_wire)");
@@ -217,6 +199,8 @@ int main() {
 	ADD_API_FUNCTION(mesh_patch_ids, "PackedInt32Array", "", "Source patch per triangle (-1 after a remesh)");
 	ADD_API_FUNCTION(session_replay, "String", "String json",
 			"Replay a CASSIE session through the graph port: ok cycles=N user=M, then a stroke-id line per cycle");
+	ADD_API_FUNCTION(boundary_patches, "String", "PackedFloat32Array points, PackedInt32Array counts, float target_edge_length",
+			"Triangulate closed boundaries (counts[i] xyz points each) into the patches mesh_build merges");
 	ADD_API_FUNCTION(check, "String", "String name", "One Gate 4 check");
 	ADD_API_FUNCTION(check_all, "String", "", "Every Gate 4 check");
 	ADD_API_FUNCTION(check_names, "String", "", "The Gate 4 check names");

@@ -2030,6 +2030,40 @@ std::vector<std::vector<int>> Replay::Cycles(bool p_include_user) const {
 	return out;
 }
 
+std::vector<CycleBoundary> Replay::Boundaries(bool p_include_user) const {
+	std::vector<CycleBoundary> out;
+	for (Cycle *c : impl->graph._cycles.Items()) {
+		if (c->userCreated && !p_include_user) {
+			continue;
+		}
+		CycleBoundary b;
+		b.user_created = c->userCreated;
+		b.strokes = c->StrokeIDs();
+		std::sort(b.strokes.begin(), b.strokes.end());
+		b.strokes.erase(std::unique(b.strokes.begin(), b.strokes.end()), b.strokes.end());
+		// Each half-segment is walked toward the node it shares with the next one.
+		std::vector<const Segment *> segs;
+		for (const HalfSegment &hs : c->HalfSegments) {
+			segs.push_back(hs.segment);
+		}
+		for (size_t i = 0; i < segs.size(); i++) {
+			const Segment *s = segs[i];
+			const Segment *next = segs[(i + 1) % segs.size()];
+			bool toward_start = s->GetStartNode() != s->GetEndNode() && (s->GetStartNode() == next->GetStartNode() || s->GetStartNode() == next->GetEndNode());
+			BoundarySpan sp;
+			sp.stroke = s->Stroke->ID;
+			double t0 = to_double(s->GetStartParam());
+			double t1 = to_double(s->GetEndParam());
+			sp.t_from = toward_start ? t1 : t0;
+			sp.t_to = toward_start ? t0 : t1;
+			b.spans.push_back(sp);
+		}
+		out.push_back(b);
+	}
+	std::sort(out.begin(), out.end(), [](const CycleBoundary &a, const CycleBoundary &b) { return a.strokes < b.strokes; });
+	return out;
+}
+
 ReplayStats Replay::Stats() const {
 	return impl->stats;
 }

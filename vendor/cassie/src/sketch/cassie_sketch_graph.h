@@ -107,7 +107,6 @@ public:
 	int get_id() const { return id; }
 	void set_points(const PackedVector3Array &p) { points = p; }
 	PackedVector3Array get_points() const { return points; }
-	const PackedVector3Array &get_points_ref() const { return points; }
 	void set_normals(const PackedVector3Array &n) { normals = n; }
 	PackedVector3Array get_normals() const { return normals; }
 	void set_node_a_id(int n) { node_a_id = n; }
@@ -137,30 +136,6 @@ class CassieSketchGraph : public Resource {
 	HashMap<int, Ref<CassieSketchGraphNode>> nodes;
 	HashMap<int, Ref<CassieSketchGraphEdge>> edges;
 	int next_node_id = 0;
-	// A uniform grid over node positions and edge segments, so a junction
-	// looks only at the cells around it. Removed edges stay listed and are
-	// skipped by id, which is never reused.
-	struct SegRef {
-		int eid;
-		int seg;
-	};
-	HashMap<int64_t, LocalVector<int>> node_cells;
-	HashMap<int64_t, LocalVector<SegRef>> seg_cells;
-	void _index_node(int p_id);
-	void _index_edge(int p_eid);
-
-	// Incremental cycles, as CASSIE's Graph keeps them: found by walks seeded
-	// at new edges, repaired when an edge is split, dropped when a new edge
-	// cuts across, and at most two through any edge.
-	bool incremental_cycles = false;
-	HashMap<String, PackedInt32Array> live_cycles;
-	HashMap<int, int> edge_cycle_count;
-	bool _cycle_add(const PackedInt32Array &p_edges);
-	void _cycle_remove(const String &p_sig);
-	void _cycles_repair_split(int p_old, int p_first, int p_second, int p_node_a);
-	void _cycles_after_curve(const LocalVector<int> &p_new_edges);
-	int _trivial_reach(int p_node, int p_from_edge) const;
-	bool _walk_cycle(int p_seed, int p_start_nid, LocalVector<int> &r_path) const;
 	int next_edge_id = 0;
 
 	real_t merge_epsilon = real_t(0.02);
@@ -246,32 +221,6 @@ public:
 			const PackedVector3Array &p_normals,
 			const PackedVector3Array &p_crossings, real_t p_proximity,
 			bool p_boundary = false);
-
-	// Topology by identity, not distance: a node made here is never merged
-	// with another by position, and an edge joins the two nodes it is given.
-	int create_node(const Vector3 &p_position);
-	int add_edge_between(const PackedVector3Array &p_points, int p_node_a,
-			int p_node_b, bool p_boundary, int p_source = -1);
-	void remove_edge(int p_edge_id) { _remove_edge(p_edge_id); }
-	int get_edge_node(int p_edge_id, int p_end) const;
-	void set_incremental_cycles(bool p_enable) { incremental_cycles = p_enable; }
-
-	// A curve whose junctions were recorded by CASSIE, which anchors each one
-	// exactly on the stroke it touched: a junction is the existing node or edge
-	// point within p_tol (float and sampling error), never a merge by distance;
-	// p_end_tol is how far along the curve a junction still counts as its end.
-	// Junctions on nothing in the graph are counted in r_unmatched.
-	int add_curve_at_junctions(const PackedVector3Array &p_points,
-			const PackedVector3Array &p_junctions, real_t p_tol, real_t p_end_tol, bool p_boundary,
-			bool p_split_closed, int &r_unmatched, int p_source = -1);
-
-private:
-	int _node_at(const Vector3 &p_pos, real_t p_tol) const;
-	bool _edge_at(const Vector3 &p_pos, real_t p_tol, int &r_eid, int &r_seg) const;
-	int _split_edge_at(int p_eid, int p_seg, const Vector3 &p_pos);
-	int _locate(const Vector3 &p_pos, real_t p_tol);
-
-public:
 
 	// interactor-dress-on: true when every edge of the cycle is a boundary
 	// edge. Such a cycle bounds an opening of the surface (a skirt's waist

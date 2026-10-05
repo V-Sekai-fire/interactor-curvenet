@@ -318,31 +318,6 @@ Dictionary CassieSketcher::commit_stroke_with_crossings(int p_stroke_id,
 	return result;
 }
 
-Dictionary CassieSketcher::commit_stroke_recorded(int p_stroke_id,
-		const PackedVector3Array &p_junctions, int p_source) {
-	Dictionary result;
-	result["ok"] = false;
-	HashMap<int, InFlightStroke>::Iterator it = in_flight.find(p_stroke_id);
-	if (!it) {
-		return result;
-	}
-	const PackedVector3Array points = it->value.input->get_points();
-	const bool boundary = it->value.boundary;
-	in_flight.remove(it);
-	_ensure_owned_state();
-	// 0.1 mm: recorded junctions lie on the stroke they touched within 0.016 mm.
-	// 1 mm along the curve: they lie on their own stroke within 0.41 mm.
-	sketch_graph->add_curve_at_junctions(points, p_junctions, real_t(0.0001), real_t(0.001), boundary,
-			split_closed_strokes, junction_misses, p_source);
-	const Dictionary patch_update = surface_manager->update();
-	result["ok"] = true;
-	result["is_valid"] = true;
-	result["final_stroke"] = Variant();
-	result["new_patches"] = patch_update.get("new_patches", TypedArray<CassieSurfacePatch>());
-	result["removed_patches"] = patch_update.get("removed_patches", TypedArray<CassieSurfacePatch>());
-	return result;
-}
-
 Dictionary CassieSketcher::apply_remote_samples(const PackedByteArray &p_packet) {
 	Dictionary result;
 	result["ok"] = false;
@@ -380,7 +355,6 @@ void CassieSketcher::clear() {
 	in_flight.clear();
 	last_encoded_packet.clear();
 	committed_strokes.clear();
-	junction_misses = 0;
 	if (sketch_graph.is_valid()) {
 		sketch_graph->clear();
 	}

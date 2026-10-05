@@ -158,13 +158,6 @@ WorldPoint Point(const Json &j) {
 	return w;
 }
 
-std::vector<std::vector<int>> Sorted(std::vector<std::vector<int>> p_cycles) {
-	for (std::vector<int> &c : p_cycles) {
-		std::sort(c.begin(), c.end());
-	}
-	return p_cycles;
-}
-
 void Run(const Json &root, bool p_trace, SessionResult &r) {
 	std::map<int, const Json *> by_id;
 	for (const Json &s : root["allSketchedStrokes"].arr) {
@@ -252,7 +245,10 @@ void Run(const Json &root, bool p_trace, SessionResult &r) {
 		}
 		i = next;
 	}
-	r.cycles = Sorted(replay.Cycles(false));
+	r.boundaries = replay.Boundaries(false);
+	for (const CycleBoundary &b : r.boundaries) {
+		r.cycles.push_back(b.strokes);
+	}
 	r.user_cycles = (int)replay.Cycles(true).size() - (int)r.cycles.size();
 	r.stats = replay.Stats();
 	r.ok = true;
@@ -292,12 +288,19 @@ std::string FormatSessionResult(const SessionResult &p_result) {
 	std::snprintf(buf, sizeof(buf), " unresolved=%d seams=%d on_mirror=%d user_fallbacks=%d missing_patch_deletes=%d exceptions=%d\n",
 			s.unresolved_constraints, s.mirror_seam_constraints, s.on_mirror_strokes, s.user_fallbacks, s.missing_patch_deletes, s.caught_exceptions);
 	out += buf;
-	for (const std::vector<int> &c : p_result.cycles) {
+	for (size_t i = 0; i < p_result.cycles.size(); i++) {
+		const std::vector<int> &c = p_result.cycles[i];
 		for (size_t k = 0; k < c.size(); k++) {
 			if (k > 0) {
 				out += ' ';
 			}
 			out += std::to_string(c[k]);
+		}
+		out += " |";
+		for (const BoundarySpan &sp : p_result.boundaries[i].spans) {
+			char span[64];
+			std::snprintf(span, sizeof(span), " %d:%.7g:%.7g", sp.stroke, sp.t_from, sp.t_to);
+			out += span;
 		}
 		out += '\n';
 	}

@@ -61,6 +61,19 @@ struct LoggedPatch {
 	bool found_by_algo = true;
 };
 
+// A stretch of one stroke's curve, from parameter t_from to t_to in walking order.
+struct BoundarySpan {
+	int stroke = -1;
+	double t_from = 0.0;
+	double t_to = 0.0;
+};
+
+struct CycleBoundary {
+	std::vector<int> strokes; // sorted, unique
+	std::vector<BoundarySpan> spans; // the cycle's half-segments, in order
+	bool user_created = false;
+};
+
 class Replay {
 public:
 	Replay(WorldPoint p_canvas_origin, WorldPoint p_mirror_point, WorldPoint p_mirror_normal);
@@ -75,6 +88,8 @@ public:
 	bool AddUserPatches(const std::vector<LoggedPatch> &p_group);
 	bool DeletePatch(int p_id);
 	std::vector<std::vector<int>> Cycles(bool p_include_user) const;
+	// Every live cycle, sorted by strokes, with its boundary as curve-parameter spans.
+	std::vector<CycleBoundary> Boundaries(bool p_include_user) const;
 	ReplayStats Stats() const;
 
 private:

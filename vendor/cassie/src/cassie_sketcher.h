@@ -104,7 +104,6 @@ class CassieSketcher : public Node3D {
 	// packet does not carry it.
 	bool boundary_strokes = false;
 	uint16_t broadcast_seq = 0;
-	int junction_misses = 0;
 
 	// Last encoded packet, keyed by stroke_id. Kept so the
 	// caller can pull bytes for fabric broadcast after commit. Cleared
@@ -165,11 +164,6 @@ public:
 	// Parallel-commit finalize: commit an in-flight stroke splitting it at
 	// crossings supplied by the collision guest (RFD 2274) instead of solving
 	// them. Same result shape as commit_stroke.
-	// The stroke as recorded, not beautified again, joined to the graph only at
-	// the junctions CASSIE recorded for it (CassieSketchGraph::add_curve_at_junctions).
-	Dictionary commit_stroke_recorded(int p_stroke_id, const PackedVector3Array &p_junctions, int p_source = -1);
-	int get_junction_misses() const { return junction_misses; }
-
 	Dictionary commit_stroke_with_crossings(int p_stroke_id,
 			const PackedVector3Array &p_crossings);
 

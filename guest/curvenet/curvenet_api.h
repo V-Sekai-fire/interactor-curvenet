@@ -45,10 +45,6 @@ std::string pen_point(int id, float x, float y, float z, float pressure);
 // boundary strokes.
 std::string pen_end(int id);
 std::string pen_end_with_crossings(int id, const std::vector<float> &crossings_xyz);
-std::string pen_end_recorded(int id, const std::vector<float> &junctions_xyz, int source);
-std::vector<int32_t> cycle_sources();
-int find_cycles_count();
-int mesh_deferred(int max_count);
 
 int patch_count();
 std::vector<float> patch_vertices(int i);
@@ -87,6 +83,9 @@ std::vector<int32_t> mesh_patch_ids();
 // Replays a CASSIE session (graph_port/session_replay.h) through the graph port:
 // "ok cycles=N user=M ..." then one sorted stroke-id line per algorithm cycle.
 std::string session_replay(const std::string &json);
+// Triangulates each boundary (counts[i] points of xyz) with CassieTriangulator and keeps
+// the patches; mesh_build then merges these instead of the surface manager's.
+std::string boundary_patches(const std::vector<float> &points_xyz, const std::vector<int32_t> &counts, double target_edge_length);
 
 // --- checks (checks.cpp) ------------------------------------------------------
 // One line per check:

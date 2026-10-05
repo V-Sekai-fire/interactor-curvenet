@@ -40,6 +40,8 @@ struct SessionResult {
 	std::string error;
 	// Live algorithm cycles at the end, each a sorted stroke-id list.
 	std::vector<std::vector<int>> cycles;
+	// cycles[i]'s boundary: half-segments as curve-parameter spans, in walking order.
+	std::vector<CycleBoundary> boundaries;
 	int user_cycles = 0;
 	ReplayStats stats;
 	// (system state index, every cycle incl. user) after each graph event, when asked for.
@@ -52,7 +54,8 @@ struct SessionResult {
 // closedLoop) and allCreatedPatches (id, foundByAlgo, strokesID).
 SessionResult ReplaySession(const std::string &p_json, bool p_trace);
 
-// "ok cycles=N user=M" then one line of space-separated stroke ids per cycle.
+// "ok cycles=N user=M ..." then one line per cycle: its stroke ids, " |", then
+// each half-segment as "stroke:t_from:t_to" in walking order.
 std::string FormatSessionResult(const SessionResult &p_result);
 
 } // namespace cassie_graph_port

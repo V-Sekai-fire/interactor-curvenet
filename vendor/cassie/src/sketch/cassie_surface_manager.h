@@ -96,9 +96,6 @@ class CassieSurfaceManager : public Resource {
 	void _cancel_all_pending();
 
 	bool async_triangulation = true; // runtime toggle
-	// Found cycles not meshed yet: update() only finds them, mesh_deferred() meshes them.
-	bool defer_meshing = false;
-	HashMap<String, PackedInt32Array> deferred;
 
 protected:
 	static void _bind_methods();
@@ -130,10 +127,6 @@ public:
 	Dictionary update();
 
 	int get_patch_count() const { return active_patches.size(); }
-
-	void set_defer_meshing(bool p_enable) { defer_meshing = p_enable; }
-	int get_deferred_count() const { return deferred.size(); }
-	int mesh_deferred(int p_max_count);
 
 	// Export the current sketch state as a dictionary matching the upstream
 	// CASSIE raw_data/*.json schema (cassie-data/data/raw_data/README.md).
