@@ -51,7 +51,7 @@ struct ReplayStats {
 	int mirror_seam_constraints = 0;
 	int caught_exceptions = 0;
 	int on_mirror_strokes = 0;
-	int user_fallbacks = 0;
+	int tap_misses = 0; // logged taps whose replayed search found no cycle
 	int missing_patch_deletes = 0;
 };
 
@@ -84,9 +84,12 @@ public:
 
 	// Patches logged since the last stroke event; new cycles take their ids.
 	void SetPendingPatches(const std::vector<LoggedPatch> &p_patches);
+	// InputController.OnSystemChange: only the SnapSurface system finds cycles.
+	void SetSurfacing(bool p_surfacing);
 	void AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, const std::vector<RecordedConstraint> &p_constraints, bool p_closed_loop, bool p_mirroring, float p_canvas_scale);
 	void DeleteStroke(int p_id, bool p_mirroring);
-	bool AddUserPatches(const std::vector<LoggedPatch> &p_group);
+	// p_tap is the logged hand position mapped into canvas space.
+	bool AddUserPatches(const std::vector<LoggedPatch> &p_group, WorldPoint p_tap, bool p_mirroring);
 	bool DeletePatch(int p_id);
 	std::vector<std::vector<int>> Cycles(bool p_include_user) const;
 	// Every live cycle, sorted by strokes, with its boundary as curve-parameter spans.

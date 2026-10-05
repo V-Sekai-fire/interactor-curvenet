@@ -1647,7 +1647,6 @@ struct Replay::Impl {
 	std::map<int, FinalStroke *> mirrored;
 	std::vector<LoggedPatch> pending;
 	std::map<int, Cycle *> alive_patch;
-	std::map<std::vector<int>, Cycle *> user_deleted;
 	int fresh = 1000000;
 	ReplayStats stats;
 
@@ -1784,6 +1783,10 @@ struct Intersection {
 	PointOnCurve new_data;
 };
 
+void Replay::SetSurfacing(bool p_surfacing) {
+	impl->graph.surfacing = p_surfacing;
+}
+
 void Replay::SetPendingPatches(const std::vector<LoggedPatch> &p_patches) {
 	impl->pending = p_patches;
 }
@@ -1801,7 +1804,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 	Curve new_curve(ctrl);
 	bool on_mirror = true;
 	for (const V3 &p : ctrl) {
-		if (!(Fabs(p.x - m.plane.p0.x) < 1e-6f)) {
+		if (!(Fabs(Dot(m.plane.n, p - m.plane.p0)) < 1e-6f)) {
 			on_mirror = false;
 		}
 	}
@@ -1853,7 +1856,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 			in.old_data = old;
 			in.new_data = item.first;
 			intersections.push_back(in);
-		} else if (std::fabs(to_double(pos.x) - to_double(m.plane.p0.x)) < 1e-5) {
+		} else if (std::fabs(to_double(Dot(m.plane.n, pos - m.plane.p0))) < 1e-5) {
 			seams.push_back(item.first);
 			m.stats.mirror_seam_constraints++;
 		}
@@ -1929,77 +1932,31 @@ void Replay::DeleteStroke(int p_id, bool p_mirroring) {
 	}
 }
 
-// The log keeps no click position in canvas space, so each user patch is searched from its strokes' centroid and segment midpoints.
-bool Replay::AddUserPatches(const std::vector<LoggedPatch> &p_group) {
+// DrawingCanvas.TryAddPatchAt: the tap, in canvas space, then its mirror image with the same manifold choice.
+bool Replay::AddUserPatches(const std::vector<LoggedPatch> &p_group, WorldPoint p_tap, bool p_mirroring) {
 	Impl &m = *impl;
 	m.pending = p_group;
-	bool any_ok = false;
+	bool ok = false;
 	try {
-		for (const LoggedPatch &q : p_group) {
-			std::vector<int> want = Impl::Key(q.strokes);
-			std::vector<int> uniq = want;
-			uniq.erase(std::unique(uniq.begin(), uniq.end()), uniq.end());
-			double sx = 0.0;
-			double sy = 0.0;
-			double sz = 0.0;
-			int cnt = 0;
-			for (int sid : uniq) {
-				FinalStroke *st = m.Find(sid);
-				if (st == nullptr) {
-					continue;
-				}
-				for (const std::array<double, 3> &p : Impl::Dense(*st->curve, 32)) {
-					sx += p[0];
-					sy += p[1];
-					sz += p[2];
-					cnt++;
-				}
-			}
-			V3 pos = v3(real((float)(sx / cnt)), real((float)(sy / cnt)), real((float)(sz / cnt)));
-			bool have = false;
-			V3 found;
-			for (int lnm = 0; lnm < 2 && !have; lnm++) {
-				std::vector<V3> cands;
-				cands.push_back(pos);
-				for (Segment *sg : m.graph._segments.Values()) {
-					if (std::binary_search(uniq.begin(), uniq.end(), sg->Stroke->ID)) {
-						cands.push_back(sg->GetPointAt(0.5f));
-					}
-				}
-				for (const V3 &cp : cands) {
-					std::list<HalfSegment> cyc;
-					bool okc = DetectCycleAt(&m.graph, cp, lnm == 1, cyc);
-					std::vector<int> ids;
-					for (const HalfSegment &hs : cyc) {
-						ids.push_back(hs.segment->Stroke->ID);
-					}
-					if (okc && Impl::Key(ids) == want) {
-						found = cp;
-						have = true;
-						break;
-					}
-				}
-			}
-			bool ok = false;
-			if (have) {
-				ok = m.graph.TryFindCycleAt(found, false) || m.graph.TryFindCycleAt(found, true);
-			} else if (m.user_deleted.count(want)) {
-				m.stats.user_fallbacks++;
-				m.graph.cycle_pool.push_back(std::unique_ptr<Cycle>(new Cycle(true, m.user_deleted[want]->HalfSegments)));
-				ok = m.graph.TryAddCycle(m.graph.cycle_pool.back().get());
-			} else {
-				m.stats.user_fallbacks++;
-				ok = m.graph.TryFindCycleAt(pos, false) || m.graph.TryFindCycleAt(pos, true);
-			}
-			any_ok = any_ok || ok;
+		V3 pos = m.Local(p_tap);
+		bool lookAtNonManifold = false;
+		ok = m.graph.TryFindCycleAt(pos, lookAtNonManifold);
+		if (!ok) {
+			lookAtNonManifold = true;
+			ok = m.graph.TryFindCycleAt(pos, lookAtNonManifold);
 		}
-		if (any_ok) {
+		if (ok) {
+			if (p_mirroring) {
+				m.graph.TryFindCycleAt(m.plane.Mirror(pos), lookAtNonManifold);
+			}
 			m.GraphUpdate();
+		} else {
+			m.stats.tap_misses++;
 		}
 	} catch (const CsException &) {
 		m.stats.caught_exceptions++;
 	}
-	return any_ok;
+	return ok;
 }
 
 bool Replay::DeletePatch(int p_id) {
@@ -2009,7 +1966,6 @@ bool Replay::DeletePatch(int p_id) {
 		m.stats.missing_patch_deletes++;
 		return false;
 	}
-	m.user_deleted[Impl::Key(it->second->StrokeIDs())] = it->second;
 	m.graph.ManualDeletePatch(p_id);
 	m.alive_patch.erase(p_id);
 	return true;

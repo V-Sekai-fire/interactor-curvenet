@@ -46,10 +46,18 @@ struct SessionResult {
 	ReplayStats stats;
 	// (system state index, every cycle incl. user) after each graph event, when asked for.
 	std::vector<std::pair<int, std::vector<std::vector<int>>>> trace;
+	// Per committed stroke or tap, when traced: the cycles (sorted stroke ids) the replay added.
+	struct Event {
+		int state = 0;
+		std::vector<std::vector<int>> added;
+	};
+	std::vector<Event> events;
 };
 
-// p_json is a CASSIE session export, or its compact subset: systemStates
-// (interactionType, elementID, mirroring, canvasScale, time), allSketchedStrokes
+// p_json is a CASSIE session export, or its compact subset: sketchSystem, sketchModel,
+// interactionMode, systemStates
+// (interactionType, elementID, mirroring, canvasScale, time; a tapped patch adds
+// primaryHandPos, canvasPos, canvasRot), allSketchedStrokes
 // (id, ctrlPts, appliedPositionConstraints, rejectedPositionConstraints,
 // closedLoop) and allCreatedPatches (id, foundByAlgo, strokesID).
 SessionResult ReplaySession(const std::string &p_json, bool p_trace);
@@ -57,5 +65,9 @@ SessionResult ReplaySession(const std::string &p_json, bool p_trace);
 // "ok cycles=N user=M ..." then one line per cycle: its stroke ids, " |", then
 // each half-segment as "stroke:t_from:t_to" in walking order.
 std::string FormatSessionResult(const SessionResult &p_result);
+
+// One line per traced event: its system state index, a tab, then each added cycle's
+// comma-separated stroke ids, cycles separated by ';'.
+std::string FormatSessionEvents(const SessionResult &p_result);
 
 } // namespace cassie_graph_port

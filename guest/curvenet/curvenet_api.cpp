@@ -1067,4 +1067,8 @@ std::string session_replay(const std::string &json) {
 	return cassie_graph_port::FormatSessionResult(cassie_graph_port::ReplaySession(json, false));
 }
 
+std::string session_events(const std::string &json) {
+	return cassie_graph_port::FormatSessionEvents(cassie_graph_port::ReplaySession(json, true));
+}
+
 } // namespace cn

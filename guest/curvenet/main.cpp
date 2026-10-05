@@ -145,6 +145,10 @@ static Variant session_replay(String json) {
 	return text(cn::session_replay(json.utf8()));
 }
 
+static Variant session_events(String json) {
+	return text(cn::session_events(json.utf8()));
+}
+
 static Variant boundary_patches(PackedArray<float> points, PackedArray<int32_t> counts, double target_edge_length,
 		double remesh_edge_length) {
 	return text(cn::boundary_patches(points.fetch(), counts.fetch(), target_edge_length, remesh_edge_length));
@@ -216,6 +220,8 @@ int main() {
 	ADD_API_FUNCTION(mesh_patch_ids, "PackedInt32Array", "", "Source patch per triangle (-1 after a remesh)");
 	ADD_API_FUNCTION(session_replay, "String", "String json",
 			"Replay a CASSIE session through the graph port: ok cycles=N user=M, then a stroke-id line per cycle");
+	ADD_API_FUNCTION(session_events, "String", "String json",
+			"Replay a CASSIE session and list, per committed stroke or tap, the cycles the replay added");
 	ADD_API_FUNCTION(boundary_patches, "String",
 			"PackedFloat32Array points, PackedInt32Array counts, float target_edge_length, float remesh_edge_length",
 			"Triangulate closed boundaries (counts[i] xyz points each), optionally remesh each, into the patches mesh_build merges");
