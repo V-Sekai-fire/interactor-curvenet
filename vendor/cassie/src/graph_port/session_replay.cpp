@@ -206,8 +206,17 @@ void Run(const Json &root, bool p_trace, SessionResult &r) {
 	WorldPoint mirror_normal;
 	mirror_normal.x = 1.0;
 	Replay replay(origin, mirror_point, mirror_normal);
+	// StudyUtils.SketchSystem: 0 Baseline, 1 Snap, 2 SnapSurface.
+	if (root["sketchSystem"].kind != Json::NUM) {
+		r.error = "session has no sketchSystem";
+		return;
+	}
+	replay.SetSurfacing((int)root["sketchSystem"].num == 2);
 	std::vector<LoggedPatch> pending_log;
 	const std::vector<Json> &states = root["systemStates"].arr;
+	std::vector<std::vector<int>> before;
+	SessionResult::Event event;
+	bool have_event = false;
 	size_t i = 0;
 	while (i < states.size()) {
 		const Json &st = states[i];
@@ -229,10 +238,22 @@ void Run(const Json &root, bool p_trace, SessionResult &r) {
 				r.error = "tapped patch " + std::to_string(id) + " has no primaryHandPos and canvas transform";
 				return;
 			}
+			if (p_trace) {
+				before = replay.Cycles(true);
+				event = SessionResult::Event();
+				event.state = (int)i;
+				have_event = true;
+			}
 			replay.AddUserPatches(grp, tap, mirroring);
 		} else if (type == 4) {
 			replay.DeletePatch(id);
 		} else if (type == 1 || type == 2) {
+			if (p_trace && type == 1) {
+				before = replay.Cycles(true);
+				event = SessionResult::Event();
+				event.state = (int)i;
+				have_event = true;
+			}
 			replay.SetPendingPatches(pending_log);
 			pending_log.clear();
 			if (type == 1) {
@@ -272,6 +293,17 @@ void Run(const Json &root, bool p_trace, SessionResult &r) {
 		}
 		if (p_trace && type >= 1 && type <= 4) {
 			r.trace.push_back(std::make_pair((int)i, replay.Cycles(true)));
+		}
+		if (have_event) {
+			std::vector<std::vector<int>> after = replay.Cycles(true);
+			for (const std::vector<int> &c : after) {
+				if (std::find(before.begin(), before.end(), c) == before.end()) {
+					event.added.push_back(c);
+				}
+			}
+			std::sort(event.added.begin(), event.added.end());
+			r.events.push_back(event);
+			have_event = false;
 		}
 		i = next;
 	}
@@ -338,6 +370,24 @@ std::string FormatSessionResult(const SessionResult &p_result) {
 			out += span;
 		}
 		out += '\n';
+	}
+	return out;
+}
+
+std::string FormatSessionEvents(const SessionResult &p_result) {
+	if (!p_result.ok) {
+		return "error " + p_result.error + "\n";
+	}
+	std::string out;
+	for (const SessionResult::Event &e : p_result.events) {
+		out += std::to_string(e.state) + "\t";
+		for (size_t c = 0; c < e.added.size(); c++) {
+			for (size_t k = 0; k < e.added[c].size(); k++) {
+				out += (k ? "," : "") + std::to_string(e.added[c][k]);
+			}
+			out += c + 1 < e.added.size() ? ";" : "";
+		}
+		out += "\n";
 	}
 	return out;
 }

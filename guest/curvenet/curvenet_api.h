@@ -83,6 +83,8 @@ std::vector<int32_t> mesh_patch_ids();
 // Replays a CASSIE session (graph_port/session_replay.h) through the graph port:
 // "ok cycles=N user=M ..." then one sorted stroke-id line per algorithm cycle.
 std::string session_replay(const std::string &json);
+// Per committed stroke or tap: "state\tcycle;cycle", each cycle its sorted stroke ids.
+std::string session_events(const std::string &json);
 // Triangulates each boundary (counts[i] points of xyz) with CassieTriangulator and keeps
 // the patches; mesh_build then merges these instead of the surface manager's.
 // remesh_edge_length > 0 remeshes each patch on its own, its boundary held.

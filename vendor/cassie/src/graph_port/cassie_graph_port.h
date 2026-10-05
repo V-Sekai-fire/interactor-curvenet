@@ -84,6 +84,8 @@ public:
 
 	// Patches logged since the last stroke event; new cycles take their ids.
 	void SetPendingPatches(const std::vector<LoggedPatch> &p_patches);
+	// InputController.OnSystemChange: only the SnapSurface system finds cycles.
+	void SetSurfacing(bool p_surfacing);
 	void AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, const std::vector<RecordedConstraint> &p_constraints, bool p_closed_loop, bool p_mirroring, float p_canvas_scale);
 	void DeleteStroke(int p_id, bool p_mirroring);
 	// p_tap is the logged hand position mapped into canvas space.

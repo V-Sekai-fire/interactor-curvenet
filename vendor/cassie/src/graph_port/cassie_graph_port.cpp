@@ -1783,6 +1783,10 @@ struct Intersection {
 	PointOnCurve new_data;
 };
 
+void Replay::SetSurfacing(bool p_surfacing) {
+	impl->graph.surfacing = p_surfacing;
+}
+
 void Replay::SetPendingPatches(const std::vector<LoggedPatch> &p_patches) {
 	impl->pending = p_patches;
 }
