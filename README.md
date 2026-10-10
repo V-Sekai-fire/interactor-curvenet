@@ -12,4 +12,4 @@ It has no build of its own. `transport-meshing-pen` builds the guest and finds t
 
 ## Licence
 
-The Lean specification's CITATION.cff names MIT. The rest of the repository states no licence, and vendored code keeps its own.
+MIT. See [LICENSE](LICENSE).
