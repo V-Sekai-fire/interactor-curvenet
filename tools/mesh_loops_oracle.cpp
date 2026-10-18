@@ -192,6 +192,8 @@ struct Options {
 	bool straight = false;
 	bool flat = false;
 	bool control = false;
+	// --loops=open splits every stroke that closes on itself; --loops=closed draws each ring as one closed stroke.
+	std::string loops;
 	uint32_t seed = 20261005u;
 	int detail = 0;
 	int rung_only = -1;
@@ -234,7 +236,12 @@ Drawing Draw(std::mt19937 &rng, int rung, const Options &o) {
 			}
 			used.insert(e);
 			bool turns = run.size() > 1 && !Straight(d.m.points, run[run.size() - 2], ring[r - 1], ring[r]);
-			if (run.size() > 1 && (rng() % 3 == 0 || (o.straight && turns))) {
+			// Same RNG draws as the GDScript generator: rng() only when the run can be cut.
+			bool cut = run.size() > 1 && rng() % 3 == 0;
+			if (o.loops == "closed") {
+				cut = false;
+			}
+			if (run.size() > 1 && (cut || (o.straight && turns))) {
 				d.strokes.push_back(run);
 				run = Loop{ ring[r - 1] };
 			}
@@ -243,6 +250,19 @@ Drawing Draw(std::mt19937 &rng, int rung, const Options &o) {
 		if (run.size() > 1) {
 			d.strokes.push_back(run);
 		}
+	}
+	if (o.loops == "open") {
+		std::vector<Loop> split;
+		for (const Loop &arc : d.strokes) {
+			if (arc.size() > 3 && arc.front() == arc.back()) {
+				size_t mid = arc.size() / 2;
+				split.push_back(Loop(arc.begin(), arc.begin() + long(mid) + 1));
+				split.push_back(Loop(arc.begin() + long(mid), arc.end()));
+			} else {
+				split.push_back(arc);
+			}
+		}
+		d.strokes = split;
 	}
 	std::shuffle(d.strokes.begin(), d.strokes.end(), rng);
 	for (Loop &s : d.strokes) {
@@ -423,6 +443,8 @@ int main(int argc, char **argv) {
 			o.straight = true;
 		} else if (s == "--flat") {
 			o.flat = true;
+		} else if (s.rfind("--loops=", 0) == 0) {
+			o.loops = s.substr(8);
 		} else if (s == "--control") {
 			o.control = true;
 		} else if (s.rfind("--detail=", 0) == 0) {
@@ -442,6 +464,8 @@ int main(int argc, char **argv) {
 		kinds = { o.only };
 	}
 	std::mt19937 rng(o.seed);
+	long closed_strokes = 0;
+	long all_strokes = 0;
 	int all_quads = 0;
 	int all_hit = 0;
 	int all_extra = 0;
@@ -460,6 +484,10 @@ int main(int argc, char **argv) {
 			for (int i = 0; i < 20; i++) {
 				Drawing d = Draw(rng, rung, one);
 				Score s = Run(d, o.control);
+				for (const Loop &arc : d.strokes) {
+					all_strokes++;
+					closed_strokes += (arc.size() > 2 && arc.front() == arc.back()) ? 1 : 0;
+				}
 				quads += s.quads;
 				hit += s.hit;
 				extra += s.extra;
@@ -487,6 +515,7 @@ int main(int argc, char **argv) {
 					100.0 * hit / quads, extra, exact);
 		}
 	}
+	std::printf("STROKES %ld, closed %ld\n", all_strokes, closed_strokes);
 	std::printf("TOTAL %d of %d quads (%.2f%%), %d extra, %d drawings not exact\n", all_hit, all_quads, 100.0 * all_hit / all_quads, all_extra,
 			failed);
 	std::printf("RESULT: %s\n", failed == 0 ? "PASS" : "FAIL");
