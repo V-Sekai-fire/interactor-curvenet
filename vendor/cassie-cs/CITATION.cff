@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: If you use this code, cite CASSIE.
 title: CASSIE C# graph and curve code (vendored)
 abstract: >-
-  26 C# files of CASSIE's Unity app at 3a3178e73e: the sketch graph (Graph,
+  26 C# files of CASSIE's VR app at 3a3178e73e: the sketch graph (Graph,
   Node, Segment, Cycle, CycleDetection), the curves (BezierCurve, LineCurve,
   PointOnCurve), FinalStroke, the constraint and study-log types they
   reference, and ConstraintCandidate cut out of ConstraintSolver.cs.
