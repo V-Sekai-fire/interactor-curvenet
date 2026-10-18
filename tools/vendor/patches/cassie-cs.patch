@@ -1,0 +1,30 @@
+--- a/vendor/cassie-cs/src/FinalStroke.cs
++++ b/vendor/cassie-cs/src/FinalStroke.cs
+@@ -1,5 +1,4 @@
+ using UnityEngine;
+-using UnityEditor;
+ using System.Collections.Generic;
+ using Curve;
+ using VRSketch;
+@@ -19,19 +18,8 @@
+     public Vector3[] inputSamples { get; private set; } = null;
+ 
+     // FinalStroke should always be initialized as a child to a DrawingCanvas
+-    protected override void Awake()
+-    {
+-        base.Awake();
+-        // Fetch reference to scene graph
+-        DrawingCanvas parent = GetComponentInParent<DrawingCanvas>();
+-        if (parent != null)
+-        {
+-            _graph = parent.Graph;
+-        }
+-
+-        else
+-            throw new System.Exception("FinalStroke should always be initialized as a child to a DrawingCanvas");
+-    }
++    // The oracle hands in the graph instead of finding it on the parent DrawingCanvas.
++    public void Init(Graph g) { _graph = g; }
+ 
+ #if UNITY_EDITOR
+     private void OnDrawGizmos()
