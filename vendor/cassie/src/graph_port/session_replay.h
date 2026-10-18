@@ -60,7 +60,8 @@ struct SessionResult {
 // primaryHandPos, canvasPos, canvasRot), allSketchedStrokes
 // (id, ctrlPts, appliedPositionConstraints, rejectedPositionConstraints,
 // closedLoop) and allCreatedPatches (id, foundByAlgo, strokesID).
-SessionResult ReplaySession(const std::string &p_json, bool p_trace);
+// p_match_cassie keeps the original app's cycles (Replay::SetMatchCassie); false finds the correct faces.
+SessionResult ReplaySession(const std::string &p_json, bool p_trace, bool p_match_cassie = false);
 
 // "ok cycles=N user=M ..." then one line per cycle: its stroke ids, " |", then
 // each half-segment as "stroke:t_from:t_to" in walking order.

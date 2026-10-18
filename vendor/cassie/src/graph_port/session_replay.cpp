@@ -211,7 +211,7 @@ bool MirrorPlane(const Json &root, WorldPoint &r_point, WorldPoint &r_normal, st
 	return true;
 }
 
-void Run(const Json &root, bool p_trace, SessionResult &r) {
+void Run(const Json &root, bool p_trace, bool p_match_cassie, SessionResult &r) {
 	std::map<int, const Json *> by_id;
 	for (const Json &s : root["allSketchedStrokes"].arr) {
 		by_id[(int)s["id"].num] = &s;
@@ -239,6 +239,7 @@ void Run(const Json &root, bool p_trace, SessionResult &r) {
 		return;
 	}
 	replay.SetSurfacing((int)root["sketchSystem"].num == 2);
+	replay.SetMatchCassie(p_match_cassie);
 	std::vector<LoggedPatch> pending_log;
 	const std::vector<Json> &states = root["systemStates"].arr;
 	std::vector<std::vector<int>> before;
@@ -345,7 +346,7 @@ void Run(const Json &root, bool p_trace, SessionResult &r) {
 
 } // namespace
 
-SessionResult ReplaySession(const std::string &p_json, bool p_trace) {
+SessionResult ReplaySession(const std::string &p_json, bool p_trace, bool p_match_cassie) {
 	SessionResult r;
 	Parser parser;
 	parser.p = p_json.c_str();
@@ -359,7 +360,7 @@ SessionResult ReplaySession(const std::string &p_json, bool p_trace) {
 		return r;
 	}
 	try {
-		Run(root, p_trace, r);
+		Run(root, p_trace, p_match_cassie, r);
 	} catch (const std::exception &e) {
 		r.ok = false;
 		r.error = std::string("replay threw: ") + e.what();
