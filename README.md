@@ -12,7 +12,7 @@ It has no build of its own. `transport-meshing-pen` builds the guest and finds t
 
 ## Checking the graph port against CASSIE
 
-`tools/cassie_oracle` runs CASSIE's original C# graph code (`vendor/cassie-cs`) under dotnet, with a small stand-in for the Unity math types. `tools/cassie_oracle_compare.py` replays recorded sessions through it and through `graph_port_replay --events`, and reports per event where the two disagree and how each matches the faces the session log records.
+`tools/cassie_oracle` runs CASSIE's original C# graph code (`vendor/cassie-cs`) under dotnet, with a small stand-in for the game engine math types it was written against. `tools/cassie_oracle_compare.py` replays recorded sessions through it and through `graph_port_replay --events`, and reports per event where the two disagree and how each matches the faces the session log records.
 
     dotnet build tools/cassie_oracle
     c++ -std=c++17 -O2 tools/graph_port_replay.cpp vendor/cassie/src/graph_port/*.cpp -o graph_port_replay

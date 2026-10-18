@@ -1,4 +1,4 @@
-// Minimal stand-ins for the UnityEngine types CASSIE's graph and curve code use, in float like Unity.
+// Minimal stand-ins for the engine math types CASSIE's graph and curve code use, in 32-bit float.
 using System;
 using System.Collections.Generic;
 
@@ -74,7 +74,7 @@ namespace UnityEngine
         public static Vector3 operator *(Vector3 a, float d) => new Vector3(a.x * d, a.y * d, a.z * d);
         public static Vector3 operator *(float d, Vector3 a) => new Vector3(a.x * d, a.y * d, a.z * d);
         public static Vector3 operator /(Vector3 a, float d) => new Vector3(a.x / d, a.y / d, a.z / d);
-        // Unity compares with a tolerance.
+        // Equality is within a tolerance, as the original engine defines it.
         public static bool operator ==(Vector3 a, Vector3 b) => (a - b).sqrMagnitude < 9.99999944E-11f;
         public static bool operator !=(Vector3 a, Vector3 b) => !(a == b);
         public bool Equals(Vector3 o) => x.Equals(o.x) && y.Equals(o.y) && z.Equals(o.z);
