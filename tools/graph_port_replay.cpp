@@ -10,8 +10,11 @@
 int main(int argc, char **argv) {
 	const char *path = "C:/meshing-pen/6-datasource/cassie/data/raw_data/dress.json";
 	const char *dump_path = nullptr;
+	bool match_cassie = false;
 	for (int a = 1; a < argc; a++) {
-		if (std::string(argv[a]) == "--dump" && a + 1 < argc) {
+		if (std::string(argv[a]) == "--match-cassie") {
+			match_cassie = true;
+		} else if (std::string(argv[a]) == "--dump" && a + 1 < argc) {
 			dump_path = argv[++a];
 		} else {
 			path = argv[a];
@@ -29,7 +32,7 @@ int main(int argc, char **argv) {
 		text.append(buf, n);
 	}
 	std::fclose(f);
-	cassie_graph_port::SessionResult result = cassie_graph_port::ReplaySession(text, dump_path != nullptr);
+	cassie_graph_port::SessionResult result = cassie_graph_port::ReplaySession(text, dump_path != nullptr, match_cassie);
 	if (dump_path != nullptr) {
 		FILE *dump = std::fopen(dump_path, "wb");
 		if (dump != nullptr) {

@@ -799,6 +799,8 @@ public:
 class Graph {
 public:
 	bool surfacing = true;
+	// true keeps the original app's behaviour: a stroke passing through a node leaves its cycles unchecked.
+	bool match_cassie = false;
 	std::vector<Cycle *> _toAddCache;
 	CsHashSet<Cycle *> _toRemoveCache{ CycleHash, CycleEq };
 	CsHashSet<Segment *> _updatedSegmentsCache{ SegmentHash, SegmentEq };
@@ -1178,6 +1180,11 @@ public:
 		_graph->SetEnd(old, point.t, node, false);
 		if (!onNewStroke) {
 			_graph->RepairCycles(old, newSegment);
+		} else if (!_graph->match_cassie) {
+			// The new stroke passes through an existing node: re-check the cycles on both wedges it
+			// enters, so a face found before this stroke divided it is split instead of kept merged.
+			_graph->UpdateNeighborsCycles(old, node);
+			_graph->UpdateNeighborsCycles(newSegment, node);
 		}
 	}
 	bool MendSegments(Node *mendAt, Segment *sA, Segment *sB) {
@@ -1785,6 +1792,10 @@ struct Intersection {
 
 void Replay::SetSurfacing(bool p_surfacing) {
 	impl->graph.surfacing = p_surfacing;
+}
+
+void Replay::SetMatchCassie(bool p_match) {
+	impl->graph.match_cassie = p_match;
 }
 
 void Replay::SetPendingPatches(const std::vector<LoggedPatch> &p_patches) {
