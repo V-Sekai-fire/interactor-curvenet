@@ -196,6 +196,10 @@ struct Options {
 	std::string loops;
 	// --bends=off splits every stroke at each vertex where it turns, after all random draws, keeping order and direction.
 	std::string bends;
+	// --pick=I --dump=F writes drawing I of the selected rung as a session to F and its mesh to F.mesh.json.
+	int pick = -1;
+	// --through=off ends a stroke at every existing node it would pass through mid-stroke (bends elsewhere stay).
+	std::string through;
 	uint32_t seed = 20261005u;
 	int detail = 0;
 	int rung_only = -1;
@@ -284,6 +288,25 @@ Drawing Draw(std::mt19937 &rng, int rung, const Options &o) {
 				}
 			}
 			split.push_back(run);
+		}
+		d.strokes = split;
+	}
+	if (o.through == "off") {
+		std::set<Key> held;
+		std::vector<Loop> split;
+		for (const Loop &arc : d.strokes) {
+			Loop run{ arc[0] };
+			for (size_t i = 1; i < arc.size(); i++) {
+				run.push_back(arc[i]);
+				if (i + 1 < arc.size() && held.count(arc[i])) {
+					split.push_back(run);
+					run = Loop{ arc[i] };
+				}
+			}
+			split.push_back(run);
+			for (Key k : arc) {
+				held.insert(k);
+			}
 		}
 		d.strokes = split;
 	}
@@ -473,6 +496,10 @@ int main(int argc, char **argv) {
 			o.straight = true;
 		} else if (s == "--flat") {
 			o.flat = true;
+		} else if (s.rfind("--through=", 0) == 0) {
+			o.through = s.substr(10);
+		} else if (s.rfind("--pick=", 0) == 0) {
+			o.pick = std::stoi(s.substr(7));
 		} else if (s.rfind("--bends=", 0) == 0) {
 			o.bends = s.substr(8);
 		} else if (s.rfind("--loops=", 0) == 0) {
@@ -516,7 +543,41 @@ int main(int argc, char **argv) {
 			int exact = 0;
 			for (int i = 0; i < 20; i++) {
 				Drawing d = Draw(rng, rung, one);
+				if (o.pick == i && !o.dump.empty()) {
+					std::string text = Session(d);
+					FILE *f = std::fopen(o.dump.c_str(), "wb");
+					std::fwrite(text.data(), 1, text.size(), f);
+					std::fclose(f);
+					std::ostringstream mj;
+					mj << "{\"points\":{";
+					bool first = true;
+					for (const std::pair<const Key, P3> &kv : d.m.points) {
+						mj << (first ? "" : ",") << "\"" << kv.first << "\":" << Json(World(d, kv.first));
+						first = false;
+					}
+					mj << "},\"faces\":[";
+					for (size_t q = 0; q < d.m.faces.size(); q++) {
+						mj << (q ? "," : "") << "[" << d.m.faces[q][0] << "," << d.m.faces[q][1] << "," << d.m.faces[q][2] << "," << d.m.faces[q][3] << "]";
+					}
+					mj << "],\"strokes\":[";
+					for (size_t k = 0; k < d.strokes.size(); k++) {
+						mj << (k ? "," : "") << "[";
+						for (size_t q = 0; q < d.strokes[k].size(); q++) {
+							mj << (q ? "," : "") << d.strokes[k][q];
+						}
+						mj << "]";
+					}
+					mj << "]}";
+					std::string mt = mj.str();
+					f = std::fopen((o.dump + ".mesh.json").c_str(), "wb");
+					std::fwrite(mt.data(), 1, mt.size(), f);
+					std::fclose(f);
+				}
 				Score s = Run(d, o.control);
+				if (o.pick == i) {
+					std::printf("PICK %d: %d of %d quads, %d extra\n", i, s.hit, s.quads, s.extra);
+					Detail(d, s);
+				}
 				bending_strokes += BendingStrokes(d);
 				for (const Loop &arc : d.strokes) {
 					all_strokes++;
