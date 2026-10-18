@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: If you use this code, cite CASSIE.
+title: CASSIE C# graph and curve code (vendored)
+abstract: >-
+  26 C# files of CASSIE's Unity app at 3a3178e73e: the sketch graph (Graph,
+  Node, Segment, Cycle, CycleDetection), the curves (BezierCurve, LineCurve,
+  PointOnCurve), FinalStroke, the constraint and study-log types they
+  reference, and ConstraintCandidate cut out of ConstraintSolver.cs.
+  tools/vendor/cassie_cs_subset.sh reproduces it and applies
+  tools/vendor/patches/cassie-cs.patch, which hands FinalStroke its graph
+  instead of finding it on the parent DrawingCanvas. tools/cassie_oracle runs
+  it under dotnet to check the C++ graph port in vendor/cassie.
+authors:
+  - name: V-Sekai
+repository-code: https://github.com/V-Sekai/interactor-cassie
+commit: 3a3178e73e1218f4f38e24fba4b6d72cd18e962b
+license: MIT
+references:
+  - type: article
+    title: "CASSIE: Curve and Surface Sketching in Immersive Environments"
+    authors:
+      - family-names: Yu
+        given-names: Emilie
+      - family-names: Arora
+        given-names: Rahul
+      - family-names: Stanko
+        given-names: Tibor
+      - family-names: Bærentzen
+        given-names: J. Andreas
+      - family-names: Singh
+        given-names: Karan
+      - family-names: Bousseau
+        given-names: Adrien
+    doi: 10.1145/3411764.3445158
+    year: 2021
+    conference:
+      name: CHI 2021

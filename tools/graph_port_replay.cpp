@@ -11,9 +11,12 @@ int main(int argc, char **argv) {
 	const char *path = "C:/meshing-pen/6-datasource/cassie/data/raw_data/dress.json";
 	const char *dump_path = nullptr;
 	bool match_cassie = false;
+	bool events = false;
 	for (int a = 1; a < argc; a++) {
 		if (std::string(argv[a]) == "--match-cassie") {
 			match_cassie = true;
+		} else if (std::string(argv[a]) == "--events") {
+			events = true;
 		} else if (std::string(argv[a]) == "--dump" && a + 1 < argc) {
 			dump_path = argv[++a];
 		} else {
@@ -32,7 +35,22 @@ int main(int argc, char **argv) {
 		text.append(buf, n);
 	}
 	std::fclose(f);
-	cassie_graph_port::SessionResult result = cassie_graph_port::ReplaySession(text, dump_path != nullptr, match_cassie);
+	cassie_graph_port::SessionResult result = cassie_graph_port::ReplaySession(text, dump_path != nullptr || events, match_cassie);
+	if (events) {
+		// One "state<TAB>a,b;c,d" line per stroke or tap event: the cycles it added.
+		std::printf("%s\n", result.ok ? "ok" : result.error.c_str());
+		for (const cassie_graph_port::SessionResult::Event &e : result.events) {
+			std::printf("%d\t", e.state);
+			for (size_t c = 0; c < e.added.size(); c++) {
+				for (size_t k = 0; k < e.added[c].size(); k++) {
+					std::printf(k ? ",%d" : "%d", e.added[c][k]);
+				}
+				std::printf(c + 1 < e.added.size() ? ";" : "");
+			}
+			std::printf("\n");
+		}
+		return result.ok ? 0 : 1;
+	}
 	if (dump_path != nullptr) {
 		FILE *dump = std::fopen(dump_path, "wb");
 		if (dump != nullptr) {
