@@ -194,6 +194,8 @@ struct Options {
 	bool control = false;
 	// --loops=open splits every stroke that closes on itself; --loops=closed draws each ring as one closed stroke.
 	std::string loops;
+	// --bends=off splits every stroke at each vertex where it turns, after all random draws, keeping order and direction.
+	std::string bends;
 	uint32_t seed = 20261005u;
 	int detail = 0;
 	int rung_only = -1;
@@ -270,7 +272,35 @@ Drawing Draw(std::mt19937 &rng, int rung, const Options &o) {
 			std::reverse(s.begin(), s.end());
 		}
 	}
+	if (o.bends == "off") {
+		std::vector<Loop> split;
+		for (const Loop &arc : d.strokes) {
+			Loop run{ arc[0] };
+			for (size_t i = 1; i < arc.size(); i++) {
+				run.push_back(arc[i]);
+				if (i + 1 < arc.size() && !Straight(d.m.points, arc[i - 1], arc[i], arc[i + 1])) {
+					split.push_back(run);
+					run = Loop{ arc[i] };
+				}
+			}
+			split.push_back(run);
+		}
+		d.strokes = split;
+	}
 	return d;
+}
+
+int BendingStrokes(const Drawing &d) {
+	int n = 0;
+	for (const Loop &arc : d.strokes) {
+		for (size_t i = 1; i + 1 < arc.size(); i++) {
+			if (!Straight(d.m.points, arc[i - 1], arc[i], arc[i + 1])) {
+				n++;
+				break;
+			}
+		}
+	}
+	return n;
 }
 
 std::vector<std::vector<int>> Cycles(const Drawing &d, const std::vector<Loop> &loops) {
@@ -443,6 +473,8 @@ int main(int argc, char **argv) {
 			o.straight = true;
 		} else if (s == "--flat") {
 			o.flat = true;
+		} else if (s.rfind("--bends=", 0) == 0) {
+			o.bends = s.substr(8);
 		} else if (s.rfind("--loops=", 0) == 0) {
 			o.loops = s.substr(8);
 		} else if (s == "--control") {
@@ -464,6 +496,7 @@ int main(int argc, char **argv) {
 		kinds = { o.only };
 	}
 	std::mt19937 rng(o.seed);
+	long bending_strokes = 0;
 	long closed_strokes = 0;
 	long all_strokes = 0;
 	int all_quads = 0;
@@ -484,6 +517,7 @@ int main(int argc, char **argv) {
 			for (int i = 0; i < 20; i++) {
 				Drawing d = Draw(rng, rung, one);
 				Score s = Run(d, o.control);
+				bending_strokes += BendingStrokes(d);
 				for (const Loop &arc : d.strokes) {
 					all_strokes++;
 					closed_strokes += (arc.size() > 2 && arc.front() == arc.back()) ? 1 : 0;
@@ -515,7 +549,7 @@ int main(int argc, char **argv) {
 					100.0 * hit / quads, extra, exact);
 		}
 	}
-	std::printf("STROKES %ld, closed %ld\n", all_strokes, closed_strokes);
+	std::printf("STROKES %ld, closed %ld, bending %ld\n", all_strokes, closed_strokes, bending_strokes);
 	std::printf("TOTAL %d of %d quads (%.2f%%), %d extra, %d drawings not exact\n", all_hit, all_quads, 100.0 * all_hit / all_quads, all_extra,
 			failed);
 	std::printf("RESULT: %s\n", failed == 0 ? "PASS" : "FAIL");
