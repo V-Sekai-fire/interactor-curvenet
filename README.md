@@ -21,6 +21,10 @@ It has no build of its own. `transport-meshing-pen` builds the guest and finds t
 
 `--self-test` switches off the oracle's mirrored tap on a session that taps with mirroring on, and fails unless the comparison catches it.
 
+The port has no distance thresholds: a snap lands on a node only when the log says it did (`isAtExistingNode`) or the curve parameters are equal, and the closest point on a curve is found exactly, so a point on a stroke's end projects to t = 0 or 1. A tapped face is rebuilt from the strokes the log names for it. `tools/test_tap_replay.py` checks that.
+
+    python3 tools/test_tap_replay.py ./graph_port_replay
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

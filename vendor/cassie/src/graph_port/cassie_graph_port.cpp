@@ -1,3 +1,6 @@
+#include <cstdio>
+#include <cstdlib>
+#include <cstdlib>
 /**************************************************************************/
 /*  cassie_graph_port.cpp                                                 */
 /**************************************************************************/
@@ -28,6 +31,7 @@
 #include "df32.h"
 
 #include <algorithm>
+#include <set>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -274,9 +278,44 @@ public:
 			r.position = proj;
 			return r;
 		}
+		// Exact projection: the coarse search brackets the nearest parameter, bisection on the sign of
+		// d/dt |C(t) - p|^2 finds the stationary point in that bracket, and both ends compete with it,
+		// so a point on a stroke's end projects to exactly t = 0 or t = 1.
 		int nSlices = 10 * (int)beziers.size();
-		real tMin = GetClosestPointParameter(point, nSlices, 0.0f, 1.0f, 5);
-		return GetPointOnCurve(tMin);
+		double step = 1.0 / nSlices;
+		double tc = to_double(GetClosestPointParameter(point, nSlices, 0.0f, 1.0f, 3));
+		double lo = std::max(tc - 2 * step, 0.0), hi = std::min(tc + 2 * step, 1.0);
+		auto slope = [&](double t) {
+			V3 c = GetPoint(real((float)t));
+			V3 d = GetTangentRaw(real((float)t));
+			return to_double(Dot(c - point, d));
+		};
+		double best_t = tc;
+		double best_d = to_double(Distance(point, GetPoint(real((float)tc))));
+		double flo = slope(lo), fhi = slope(hi);
+		if (flo < 0.0 && fhi > 0.0) {
+			for (int it = 0; it < 80; it++) {
+				double mid = 0.5 * (lo + hi);
+				if (slope(mid) < 0.0) lo = mid; else hi = mid;
+			}
+			double tm = 0.5 * (lo + hi);
+			double dm = to_double(Distance(point, GetPoint(real((float)tm))));
+			if (dm <= best_d) { best_t = tm; best_d = dm; }
+		}
+		for (double te : { 0.0, 1.0 }) {
+			double de = to_double(Distance(point, GetPoint(real((float)te))));
+			if (de <= best_d) { best_t = te; best_d = de; }
+		}
+		return GetPointOnCurve(real((float)best_t));
+	}
+	// Unnormalised derivative of the curve at t (exact, per cubic).
+	V3 GetTangentRaw(real t) const {
+		int nb = (int)beziers.size();
+		double td = to_double(t);
+		int idx = std::min((int)std::floor(td * nb), nb - 1);
+		double u = td * nb - idx;
+		const CubicBezier &b = beziers[idx];
+		return b.c1 + real((float)(2.0 * u)) * b.c2 + real((float)(3.0 * u * u)) * b.c3;
 	}
 
 	PointOnCurve GetPointOnCurve(real t) const {
@@ -989,6 +1028,8 @@ public:
 		return closest;
 	}
 	bool TryFindCycleAt(V3 pos, bool lookAtNonManifold);
+	bool TryFindCycleByStrokes(const std::vector<int> &p_sorted_unique_strokes);
+	std::list<HalfSegment> FindLoopByStrokes(const std::vector<int> &p_key);
 	void TryFindAllCycles();
 	void UpdateNeighbors(Segment *s, Node *n) {
 		if (!surfacing) {
@@ -1123,45 +1164,30 @@ public:
 		}
 		return it;
 	}
-	PointOnCurve GetConstraint(V3 position, real snap) {
-		PointOnCurve onCurve = curve->Project(position);
-		if (!segments.empty()) {
-			Segment *s = *GetSegmentInListContaining(onCurve.t);
-			Node *closest = nullptr;
-			real param = 0.0f;
-			if (Distance(s->endpoints[0]->Position, onCurve.position) < Distance(s->endpoints[1]->Position, onCurve.position)) {
-				closest = s->endpoints[0];
-				param = s->params[0];
-			} else {
-				closest = s->endpoints[1];
-				param = s->params[1];
-			}
-			if (Distance(closest->Position, onCurve.position) < snap) {
-				onCurve = curve->GetPointOnCurve(param);
-			}
-		}
-		return onCurve;
-	}
 	Node *GetClosest(Segment *segment, V3 position) {
 		Node *l = nn(segment->GetStartNode());
 		Node *r = nn(segment->GetEndNode());
 		return Distance(l->Position, position) < Distance(r->Position, position) ? l : r;
 	}
-	Node *AddIntersectionOldStroke(PointOnCurve point, real threshold) {
+	// True when the point lies at the parameter of this segment's node nearest it: the same place on the curve, exactly.
+	static bool AtNodeParam(const Segment *s, const Node *n, real t) {
+		return (s->endpoints[0] == n && to_double(s->params[0]) == to_double(t)) || (s->endpoints[1] == n && to_double(s->params[1]) == to_double(t));
+	}
+	// p_at_node is the log's isAtExistingNode: the app found this point on a node that already joins strokes.
+	Node *AddIntersectionOldStroke(PointOnCurve point, bool p_at_node) {
 		std::list<Segment *>::iterator seg = GetSegmentInListContaining(point.t);
-		Node *newNode = _graph->NewNode(point.position);
 		Node *closest = GetClosest(*seg, point.position);
-		if (Distance(closest->Position, point.position) < threshold) {
-			_graph->RemoveNode(newNode);
+		if (p_at_node || AtNodeParam(*seg, closest, point.t)) {
 			return closest;
 		}
+		Node *newNode = _graph->NewNode(point.position);
 		AddNode(newNode, seg, point, false);
 		return newNode;
 	}
-	void AddIntersectionNewStroke(Node *node, PointOnCurve point, real threshold) {
+	void AddIntersectionNewStroke(Node *node, PointOnCurve point) {
 		std::list<Segment *>::iterator seg = GetSegmentInListContaining(point.t);
 		Node *closest = GetClosest(*seg, point.position);
-		if (Distance(closest->Position, point.position) < threshold) {
+		if (AtNodeParam(*seg, closest, point.t)) {
 			_graph->RemoveNode(closest);
 			if ((*seg)->GetStartNode() == closest) {
 				_graph->SetStart(*seg, node, true);
@@ -1597,6 +1623,102 @@ bool Graph::TryFindCycleAt(V3 pos, bool lookAtNonManifold) {
 	return false;
 }
 
+// A tapped face is logged by the strokes that bound it. The app builds it with a walk guided by the finger
+// (DetectCycleAt), which can return a loop the automatic walk never would, so a hand position replayed here can
+// miss it. This searches the graph for the smallest closed loop of segments whose strokes are exactly the logged
+// set, and adds it as a user cycle.
+std::list<HalfSegment> Graph::FindLoopByStrokes(const std::vector<int> &p_key) {
+	std::vector<Segment *> pool;
+	for (const CsDict<Segment *>::Entry &e : _segments.entries) {
+		if (e.used && e.value != nullptr && std::binary_search(p_key.begin(), p_key.end(), e.value->Stroke->ID)) {
+			pool.push_back(e.value);
+		}
+	}
+	std::sort(pool.begin(), pool.end(), [](Segment *a, Segment *b) { return a->ID < b->ID; });
+	struct Search {
+		const std::vector<int> &key;
+		std::vector<HalfSegment> &best;
+		long &budget;
+		Node *home;
+		void Go(Node *at, std::vector<HalfSegment> &path, std::set<Segment *> &used, std::set<Node *> &seen) {
+			if (--budget < 0 || (!best.empty() && path.size() >= best.size())) {
+				return;
+			}
+			for (Segment *sg : at->Neighbors) {
+				if (used.count(sg) || !std::binary_search(key.begin(), key.end(), sg->Stroke->ID)) {
+					continue;
+				}
+				Node *next = nn(sg->GetOpposite(at));
+				HalfSegment hs;
+				hs.segment = sg;
+				hs.IsReversed = sg->IsInReverse(at);
+				if (next == home) {
+					path.push_back(hs);
+					std::set<int> ids;
+					for (const HalfSegment &h : path) {
+						ids.insert(h.segment->Stroke->ID);
+					}
+					if (ids.size() == key.size() && path.size() > 1 && (best.empty() || path.size() < best.size())) {
+						best = path;
+					}
+					path.pop_back();
+				} else if (!seen.count(next)) {
+					path.push_back(hs);
+					used.insert(sg);
+					seen.insert(next);
+					Go(next, path, used, seen);
+					seen.erase(next);
+					used.erase(sg);
+					path.pop_back();
+				}
+			}
+		}
+	};
+	std::vector<HalfSegment> best;
+	long budget = 400000;
+	for (Segment *s0 : pool) {
+		Node *a = nn(s0->GetStartNode());
+		Node *b = nn(s0->GetEndNode());
+		if (a == b) {
+			if (p_key.size() == 1 && best.empty()) {
+				HalfSegment hs;
+				hs.segment = s0;
+				hs.IsReversed = false;
+				best.assign(1, hs);
+			}
+			continue;
+		}
+		std::vector<HalfSegment> path;
+		std::set<Segment *> used;
+		std::set<Node *> seen;
+		HalfSegment first;
+		first.segment = s0;
+		first.IsReversed = s0->IsInReverse(a);
+		path.push_back(first);
+		used.insert(s0);
+		seen.insert(a);
+		seen.insert(b);
+		Search search{ p_key, best, budget, a };
+		search.Go(b, path, used, seen);
+		if (budget < 0) {
+			break;
+		}
+	}
+	return std::list<HalfSegment>(best.begin(), best.end());
+}
+
+bool Graph::TryFindCycleByStrokes(const std::vector<int> &p_key) {
+	if (!surfacing) {
+		return false;
+	}
+	std::list<HalfSegment> segs = FindLoopByStrokes(p_key);
+	if (segs.empty()) {
+		return false;
+	}
+	cycle_pool.push_back(std::unique_ptr<Cycle>(new Cycle(true, segs)));
+	return TryAddCycle(cycle_pool.back().get());
+}
+
 void Graph::TryFindCycle(Segment *startSegment, Node *startNode, bool reversed) {
 	std::list<HalfSegment> segs;
 	if (DetectCycle(this, startSegment, startNode, segs, reversed)) {
@@ -1676,6 +1798,8 @@ struct Replay::Impl {
 	static std::vector<int> Key(const std::vector<int> &ids) {
 		std::vector<int> k = ids;
 		std::sort(k.begin(), k.end());
+		// A cycle can run along two segments of one stroke; the logged strokesID is the set.
+		k.erase(std::unique(k.begin(), k.end()), k.end());
 		return k;
 	}
 	// Assigns logged patch ids to new cycles, as the session's surface manager did.
@@ -1736,38 +1860,20 @@ struct Replay::Impl {
 		}
 		return out;
 	}
+	// The stroke a logged constraint hit: the nearest curve to its position, the lower id on an exact tie.
 	FinalStroke *ResolveStroke(V3 pos, PointOnCurve &r_old, real &r_dist) {
-		std::vector<std::pair<double, int>> best;
-		for (FinalStroke *st : strokes) {
-			double m = std::numeric_limits<double>::infinity();
-			for (const std::array<double, 3> &q : Dense(*st->curve, 96)) {
-				double dx = q[0] - to_double(pos.x);
-				double dy = q[1] - to_double(pos.y);
-				double dz = q[2] - to_double(pos.z);
-				m = std::min(m, std::sqrt(dx * dx + dy * dy + dz * dz));
-			}
-			best.push_back(std::make_pair(m, st->ID));
-		}
-		if (best.empty()) {
-			return nullptr;
-		}
-		std::sort(best.begin(), best.end());
 		FinalStroke *win = nullptr;
-		real win_d = 0.0f;
-		for (const std::pair<double, int> &b : best) {
-			if (!(b.first < best[0].first + 2e-3)) {
-				continue;
-			}
-			FinalStroke *st = Find(b.second);
+		double win_d = 0.0;
+		for (FinalStroke *st : strokes) {
 			PointOnCurve poc = st->curve->Project(pos);
-			real d = Distance(poc.position, pos);
+			double d = to_double(Distance(poc.position, pos));
 			if (win == nullptr || d < win_d || (d == win_d && st->ID < win->ID)) {
 				win = st;
 				win_d = d;
 				r_old = poc;
 			}
 		}
-		r_dist = win_d;
+		r_dist = real((float)win_d);
 		return win;
 	}
 };
@@ -1788,6 +1894,7 @@ struct Intersection {
 	FinalStroke *old_stroke;
 	PointOnCurve old_data;
 	PointOnCurve new_data;
+	bool at_node = false; // the log's isAtExistingNode
 };
 
 void Replay::SetSurfacing(bool p_surfacing) {
@@ -1805,8 +1912,6 @@ void Replay::SetPendingPatches(const std::vector<LoggedPatch> &p_patches) {
 void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, const std::vector<RecordedConstraint> &p_constraints, bool p_closed_loop, bool p_mirroring, float p_canvas_scale) {
 	Impl &m = *impl;
 	real sd = real(0.02f) / real(p_canvas_scale);
-	real snap = sd;
-	real merge = sd * 0.5f;
 	real prox = sd * 2.0f;
 	std::vector<V3> ctrl;
 	for (const WorldPoint &p : p_ctrl_points) {
@@ -1858,7 +1963,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 			PointOnCurve old;
 			real dist = 0.0f;
 			FinalStroke *best = m.ResolveStroke(pos, old, dist);
-			if (best == nullptr || dist > 1e-3f) {
+			if (best == nullptr) {
 				m.stats.unresolved_constraints++;
 				continue;
 			}
@@ -1866,6 +1971,7 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 			in.old_stroke = best;
 			in.old_data = old;
 			in.new_data = item.first;
+			in.at_node = c.is_at_existing_node;
 			intersections.push_back(in);
 		} else if (std::fabs(to_double(Dot(m.plane.n, pos - m.plane.p0))) < 1e-5) {
 			seams.push_back(item.first);
@@ -1876,8 +1982,8 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 		FinalStroke *fs = m.NewStroke(p_id);
 		fs->SetCurve(ctrl, p_closed_loop);
 		for (const Intersection &in : intersections) {
-			Node *node = in.old_stroke->AddIntersectionOldStroke(in.old_data, snap);
-			fs->AddIntersectionNewStroke(node, in.new_data, merge);
+			Node *node = in.old_stroke->AddIntersectionOldStroke(in.old_data, in.at_node);
+			fs->AddIntersectionNewStroke(node, in.new_data);
 		}
 		if (p_mirroring) {
 			if (on_mirror) {
@@ -1897,15 +2003,15 @@ void Replay::AddStroke(int p_id, const std::vector<WorldPoint> &p_ctrl_points, c
 					if (it != m.mirrored.end()) {
 						PointOnCurve mo = in.old_data;
 						mo.position = m.plane.Mirror(mo.position);
-						Node *node = it->second->AddIntersectionOldStroke(mo, snap);
+						Node *node = it->second->AddIntersectionOldStroke(mo, in.at_node);
 						PointOnCurve mn = in.new_data;
 						mn.position = m.plane.Mirror(mn.position);
-						ms->AddIntersectionNewStroke(node, mn, merge);
+						ms->AddIntersectionNewStroke(node, mn);
 					}
 				}
 				for (const PointOnCurve &seam : seams) {
-					Node *node = fs->AddIntersectionOldStroke(seam, snap);
-					ms->AddIntersectionNewStroke(node, seam, merge);
+					Node *node = fs->AddIntersectionOldStroke(seam, false);
+					ms->AddIntersectionNewStroke(node, seam);
 				}
 				m.strokes.push_back(ms);
 				m.GraphUpdate();
@@ -1956,10 +2062,27 @@ bool Replay::AddUserPatches(const std::vector<LoggedPatch> &p_group, WorldPoint 
 			lookAtNonManifold = true;
 			ok = m.graph.TryFindCycleAt(pos, lookAtNonManifold);
 		}
-		if (ok) {
-			if (p_mirroring) {
-				m.graph.TryFindCycleAt(m.plane.Mirror(pos), lookAtNonManifold);
+		if (ok && p_mirroring) {
+			m.graph.TryFindCycleAt(m.plane.Mirror(pos), lookAtNonManifold);
+		}
+		// The log names each face the tap made by its strokes: add any the hand position did not find.
+		for (const LoggedPatch &lp : p_group) {
+			if (lp.found_by_algo) {
+				continue;
 			}
+			std::vector<int> key = Replay::Impl::Key(lp.strokes);
+			bool have = false;
+			for (Cycle *c : m.graph._cycles.Items()) {
+				if (c->userCreated && Replay::Impl::Key(c->StrokeIDs()) == key) {
+					have = true;
+					break;
+				}
+			}
+			if (!have && m.graph.TryFindCycleByStrokes(key)) {
+				ok = true;
+			}
+		}
+		if (ok) {
 			m.GraphUpdate();
 		} else {
 			m.stats.tap_misses++;
