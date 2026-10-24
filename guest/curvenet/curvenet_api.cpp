@@ -337,7 +337,7 @@ std::string pen_end(int id) {
 	});
 }
 
-// Parallel-commit finalize (RFD 2274): commit the stroke splitting it at
+// Parallel-commit finalize (RFD66606-2274): commit the stroke splitting it at
 // crossings the collision guest found, three floats a point. Empty falls back
 // to pen_end's own solve, the predicted-points path.
 std::string pen_end_with_crossings(int id, const std::vector<float> &crossings_xyz) {

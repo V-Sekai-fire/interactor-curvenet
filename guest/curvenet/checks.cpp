@@ -338,7 +338,7 @@ Out crossing_split() {
 }
 
 // crossing_split_injected.gd: the same three overshooting strokes through
-// add_stroke_with_splits, crossings injected as world points (RFD 2274's
+// add_stroke_with_splits, crossings injected as world points (RFD66606-2274's
 // parallel-commit path), reproduce crossing_split's 9 edges / 9 nodes /
 // >= 1 cycle, proving the injected crossings match what _crossings finds.
 Out crossing_split_injected() {
